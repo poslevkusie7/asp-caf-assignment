@@ -1,0 +1,14 @@
+__pycache__/
+.vscode/
+*.so
+.idea/
+*.egg-info/
+libcaf/build/
+build/
+.caf
+libcaf/_libcaf.pyi
+
+assignment/artifacts/*
+!assignment/artifacts/asp25-assignment1.pdf
+
+coverage
