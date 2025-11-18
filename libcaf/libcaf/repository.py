@@ -311,11 +311,22 @@ class Repository:
         
     @requires_repo
     def delete_tag(self, tag:str) -> None:
-        """
+        """ Delete a tag form the repository.
+
+        :param tag: The name of the tag to delete.
+        :raises ValueError: If the tag name is empty.
+        :raises RepositoryError: If the tag does not exist.
         """
         if not tag:
             msg = 'Tag name is required'
             raise ValueError(msg)
+        tag_path = self.tags_dir() / tag
+
+        if not tag_path.exists():
+            msg = f'Tag "{tag}" does not exist.'
+            raise RepositoryError(msg)
+        
+        tag_path.unlink()
         
 
     @requires_repo
