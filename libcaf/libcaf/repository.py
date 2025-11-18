@@ -281,7 +281,7 @@ class Repository:
         :raises RepositoryError: If the tag already exists.
         :raises ValueError: If the commit reference cannot be resolved.
         :raises RepositoryNotFoundError: If the repository does not exist.
-        :raises RefError: If the commit reference cannot be resolved.
+        :raises RepositoryError: If the commit reference cannot be resolved.
         """
         if not tag: 
             msg = 'Tag name is required'
@@ -303,7 +303,7 @@ class Repository:
         
         if commit_hash is None:
             msg = f'Cannot resolve reference {commit}'
-            raise RefError(msg)
+            raise RepositoryError(msg)
         
         tag_path = self.tags_dir() / tag
         write_ref(tag_path, commit_hash)
@@ -344,7 +344,6 @@ class Repository:
         :return: True if the tag exists, False otherwise.
         :raises RepositoryNotFoundError: If the repository does not exist."""
         return (self.tags_dir() / tag_ref).exists()
-        
 
     @requires_repo
     def add_branch(self, branch: str) -> None:
