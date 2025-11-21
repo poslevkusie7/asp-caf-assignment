@@ -56,3 +56,10 @@ def test_delete_tag_success(temp_repo: Repository) -> None:
 def test_delete_nonexistent_tag_raises_repository_error(temp_repo: Repository) -> None:
     with raises(RepositoryError, match='Tag "nope" does not exist.'):
         temp_repo.delete_tag("nope")
+        
+def test_create_tag_invalid_commit_hash_raises(temp_repo: Repository):
+    # hash that cannot exist
+    bad_hash = "deadbeef1234567890"
+
+    with raises(RepositoryError):
+        temp_repo.create_tag("v1", bad_hash)
