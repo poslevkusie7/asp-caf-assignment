@@ -88,7 +88,7 @@ def tags(**kwargs) -> int:
         _print_error(f'No repository found at {repo.repo_path()}')
         return -1
 
-def add_tag(**kwargs) -> int:
+def create_tag(**kwargs) -> int:
     repo =_repo_from_cli_kwargs(kwargs)
     tag_name = kwargs.get('tag_name')
     commit = kwargs.get('commit')
@@ -102,7 +102,7 @@ def add_tag(**kwargs) -> int:
         return -1
     
     try:
-        repo.add_tag(tag_name, commit)
+        repo.create_tag(tag_name, commit)
         _print_success(f'Tag "{tag_name}" added to commit {commit}.')
         return 0
 

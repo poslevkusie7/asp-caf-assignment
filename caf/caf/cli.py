@@ -84,8 +84,8 @@ def cli() -> None:
             },
             'help': '🔍 Print the hash of the file and optionally save it to the repository',
         },
-        'add_tag': {
-            'func': cli_commands.add_tag,
+        'create_tag': {
+            'func': cli_commands.create_tag,
             'args': {
                 **_repo_args,
                 'tag_name': {

@@ -272,7 +272,7 @@ class Repository:
         return save_file_content(self.objects_dir(), file)
     
     @requires_repo
-    def add_tag(self, tag:str, commit: str) -> None:
+    def create_tag(self, tag:str, commit: str) -> None:
         """Creating a new tag point to the specific commit hash.
         
         :param tag: The name of the tag we add.
