@@ -319,6 +319,30 @@ def diff(**kwargs) -> int:
         return -1
 
 
+def checkout(**kwargs) -> int:
+    repo = _repo_from_cli_kwargs(kwargs)
+    target = kwargs.get('target')
+    force = kwargs.get('force', False)
+
+    if not target:
+        _print_error('Target (branch or commit) is required.')
+        return -1
+
+    try:
+        repo.checkout(target, force=force)  # type: ignore[attr-defined]
+        _print_success(f'Checked out {target}')
+        return 0
+    except RepositoryNotFoundError:
+        _print_error(f'No repository found at {repo.repo_path()}')
+        return -1
+    except RepositoryError as e:
+        _print_error(f'Repository error: {e}')
+        return -1
+    except ValueError as ve:
+        _print_error(f'Value error: {ve}')
+        return -1
+
+
 def _repo_from_cli_kwargs(kwargs: dict[str, str]) -> Repository:
     working_dir_path = kwargs.get('working_dir_path', '.')
     repo_dir = kwargs.get('repo_dir')
@@ -349,3 +373,5 @@ def _print_diffs(diff_stack: MutableSequence[tuple[Sequence[Diff], int]]) -> Non
 
             if diff.children:
                 diff_stack.append((diff.children, indent + 3))
+
+

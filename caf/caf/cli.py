@@ -187,6 +187,24 @@ def cli() -> None:
             },
             'help': '📊 Display differences between two commits',
         },
+        'checkout': {
+            'func': cli_commands.checkout,
+            'args': {
+                **_repo_args,
+                'target': {
+                    'type': str,
+                    'help': '🔀 Branch or commit hash to check out',
+                },
+                'force': {
+                    'type': None,
+                    'help': '⚠️ Overwrite working tree changes',
+                    'default': False,
+                    'flag': True,
+                    'short_flag': 'f',
+                },
+            },
+            'help': '🔀 Switch to a branch or commit',
+        },
     }
 
     # Register commands
