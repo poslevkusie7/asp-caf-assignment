@@ -12,7 +12,7 @@ from typing import Concatenate
 from . import Blob, Commit, Tree, TreeRecord, TreeRecordType
 from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LENGTH, HEADS_DIR, HEAD_FILE,
                         OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR)
-from .plumbing import hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
+from .plumbing import hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree, open_content_for_reading
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
 
 
@@ -635,7 +635,85 @@ class Repository:
 
         sort_diff_tree(top_level_diff)
         return top_level_diff.children
+    
+    def _clear_working_dir_except_repo(self) -> None:
+        """ Remove all files/dirs in the working directory
+        """
+        for p in self.working_dir.iterdir():
+            if p.name == self.working_dir.iterdir():
+                continue
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+                
+    def _materialize_tree(self, tree: Tree, out_dir: Path) -> None:
+        """
+        Restore a Tree object into the working directory.
+        """
+        out_dir.mkdir(parents=True, exist_ok=True)
 
+        for record in tree.records.values():
+            path = out_dir / record.name
+
+            if record.type == TreeRecordType.TREE:
+                subtree = load_tree(self.objects_dir(), record.hash)
+                self._materialize_tree(subtree, path)
+
+            else:  # TreeRecordType.BLOB
+                with open_content_for_reading(self.objects_dir(), record.hash) as f:
+                    path.write_bytes(f.read())
+    
+    @requires_repo
+    def checkout(self, target: str, *, force: bool = False) -> None:
+        """Checkout a branch, commit hash or tag.
+
+        :param target: Branch name, tag name, commit hash
+        :param force: If false refuses to checkout, if working directory differs from the HEAD tree.
+        """
+        if not target:
+            raise ValueError('Target is required')
+        
+        is_branch = target in self.branches()
+        is_tag = target in self.tags()
+        
+        try:
+            if is_branch:
+                commit_ref = self.resolve_ref(branch_ref(target))
+            elif is_tag:
+                commit_ref = self.resolve_ref(tag_ref(target))
+            else:
+                commit_ref = self.resolve_ref(target)
+        
+        except RefError as e:
+            raise RepositoryError(f'Invalide reference: {target}') from e
+        
+        if commit_ref is None:
+            raise RepositoryError(f'Cannot resolve reference "{target}"')
+        
+        if not force:
+            head_commit_ref = self.head_commit()
+            if head_commit_ref is not None:
+                head_commit = load_commit(self.objects_dir(), head_commit_ref)
+                current_tree = self.save_dir(self.working_dir)
+                if current_tree != HashRef(head_commit.tree_hash):
+                    raise RecursionError(f'Uncommitted changes in the working directory; use --force to checkout')
+        
+        try:
+            commit = load_commit(self.objects_dir(), commit_ref)
+            root_tree = load_tree(self.objects_dir, commit.tree_hash)
+        
+        except Exception as e:
+            raise RepositoryError(f'Failed to load target commit/tree for {commit_ref}') from e
+        
+        self._clear_working_dir_except_repo()
+        self._materialize_tree(root_tree, self.working_dir)
+        
+        if is_branch:
+            write_ref(self.head_file(), branch_ref(target))
+        else:
+            write_ref(self.head_file(), HashRef(commit_ref))
+                    
     def head_file(self) -> Path:
         """Get the path to the HEAD file within the repository.
 
