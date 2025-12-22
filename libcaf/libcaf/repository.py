@@ -640,7 +640,7 @@ class Repository:
         """ Remove all files/dirs in the working directory
         """
         for p in self.working_dir.iterdir():
-            if p.name == self.working_dir.iterdir():
+            if p.name == self.repo_dir.name:
                 continue
             if p.is_dir():
                 shutil.rmtree(p)
@@ -697,11 +697,11 @@ class Repository:
                 head_commit = load_commit(self.objects_dir(), head_commit_ref)
                 current_tree = self.save_dir(self.working_dir)
                 if current_tree != HashRef(head_commit.tree_hash):
-                    raise RecursionError(f'Uncommitted changes in the working directory; use --force to checkout')
+                    raise RepositoryError(f'Uncommitted changes in the working directory; use --force to checkout')
         
         try:
             commit = load_commit(self.objects_dir(), commit_ref)
-            root_tree = load_tree(self.objects_dir, commit.tree_hash)
+            root_tree = load_tree(self.objects_dir(), commit.tree_hash)
         
         except Exception as e:
             raise RepositoryError(f'Failed to load target commit/tree for {commit_ref}') from e
