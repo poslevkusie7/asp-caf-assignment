@@ -502,47 +502,11 @@ class Repository:
             msg = f'Error loading commit {current_hash}'
             raise RepositoryError(msg) from e
 
-    @requires_repo
-    def diff_commits(self, commit_ref1: Ref | None = None, commit_ref2: Ref | None = None) -> Sequence[Diff]:
-        """Generate a diff between two commits in the repository.
+    def _diff_trees(self, tree1: Tree | None, tree2: Tree | None) -> Sequence[Diff]:
+        """Generate a diff between two Tree objects.
 
-        :param commit_ref1: The reference to the first commit. If None, defaults to the current HEAD.
-        :param commit_ref2: The reference to the second commit. If None, defaults to the current HEAD.
-        :return: A list of Diff objects representing the differences between the two commits.
-        :raises RepositoryError: If a commit or tree cannot be loaded.
-        :raises RepositoryNotFoundError: If the repository does not exist."""
-        if commit_ref1 is None:
-            commit_ref1 = self.head_ref()
-        if commit_ref2 is None:
-            commit_ref2 = self.head_ref()
-
-        try:
-            commit_hash1 = self.resolve_ref(commit_ref1)
-            commit_hash2 = self.resolve_ref(commit_ref2)
-
-            if commit_hash1 is None:
-                msg = f'Cannot resolve reference {commit_ref1}'
-                raise RefError(msg)
-            if commit_hash2 is None:
-                msg = f'Cannot resolve reference {commit_ref2}'
-                raise RefError(msg)
-
-            commit1 = load_commit(self.objects_dir(), commit_hash1)
-            commit2 = load_commit(self.objects_dir(), commit_hash2)
-        except Exception as e:
-            msg = 'Error loading commit'
-            raise RepositoryError(msg) from e
-
-        if commit1.tree_hash == commit2.tree_hash:
-            return []
-
-        try:
-            tree1 = load_tree(self.objects_dir(), commit1.tree_hash)
-            tree2 = load_tree(self.objects_dir(), commit2.tree_hash)
-        except Exception as e:
-            msg = 'Error loading tree'
-            raise RepositoryError(msg) from e
-
+        Convention: tree1 = old, tree2 = new.
+        """
         top_level_diff = Diff(TreeRecord(TreeRecordType.TREE, '', ''), None, [])
         stack = [(tree1, tree2, top_level_diff)]
 
@@ -636,6 +600,91 @@ class Repository:
 
         sort_diff_tree(top_level_diff)
         return top_level_diff.children
+    
+    @requires_repo
+    def diff_commits(self, commit_ref1: Ref | None = None, commit_ref2: Ref | None = None) -> Sequence[Diff]:
+        """Generate a diff between two commits in the repository.
+
+        :param commit_ref1: The reference to the first commit. If None, defaults to the current HEAD.
+        :param commit_ref2: The reference to the second commit. If None, defaults to the current HEAD.
+        :return: A list of Diff objects representing the differences between the two commits.
+        :raises RepositoryError: If a commit or tree cannot be loaded.
+        :raises RepositoryNotFoundError: If the repository does not exist."""
+        if commit_ref1 is None:
+            commit_ref1 = self.head_ref()
+        if commit_ref2 is None:
+            commit_ref2 = self.head_ref()
+
+        try:
+            commit_hash1 = self.resolve_ref(commit_ref1)
+            commit_hash2 = self.resolve_ref(commit_ref2)
+
+            if commit_hash1 is None:
+                msg = f'Cannot resolve reference {commit_ref1}'
+                raise RefError(msg)
+            if commit_hash2 is None:
+                msg = f'Cannot resolve reference {commit_ref2}'
+                raise RefError(msg)
+
+            commit1 = load_commit(self.objects_dir(), commit_hash1)
+            commit2 = load_commit(self.objects_dir(), commit_hash2)
+        except Exception as e:
+            msg = 'Error loading commit'
+            raise RepositoryError(msg) from e
+
+        if commit1.tree_hash == commit2.tree_hash:
+            return []
+
+        try:
+            tree1 = load_tree(self.objects_dir(), commit1.tree_hash)
+            tree2 = load_tree(self.objects_dir(), commit2.tree_hash)
+        except Exception as e:
+            msg = 'Error loading tree'
+            raise RepositoryError(msg) from e
+        
+        return self._diff_trees(tree1, tree2)
+    
+    @requires_repo
+    def diff_commit_dir(self, commit_ref: Ref | None = None, path: Path | None = None) -> Sequence[Diff]:
+        """Generate a diff between commit and directory in the repository.
+
+        :param commit_ref1: The reference to the commit. If None, defaults to the current HEAD.
+        :param commit_ref2: The reference to the directory. If None, defaults to current working directory.
+        :return: A list of Diff objects representing the differences between the two commits.
+        :raises RepositoryError: If a commit or tree cannot be loaded.
+        :raises RepositoryNotFoundError: If the repository does not exist."""
+        if commit_ref is None:
+            commit_ref = self.head_ref()
+            
+        if path is None:
+            path = self.working_dir
+
+        try:
+            commit_hash = self.resolve_ref(commit_ref)
+
+            if commit_hash is None:
+                msg = f'Cannot resolve reference {commit_ref}'
+                raise RefError(msg)
+
+            commit = load_commit(self.objects_dir(), commit_hash)
+            commit_tree = load_tree(self.objects_dir(), commit.tree_hash)
+        except Exception as e:
+            msg = 'Error loading commit / tree'
+            raise RepositoryError(msg) from e
+        
+        dir_tree_hash = self.save_dir(path)  # HashRef
+
+        
+        if commit.tree_hash == dir_tree_hash:
+            return []
+
+        try:
+            dir_tree = load_tree(self.objects_dir(), dir_tree_hash)
+        except Exception as e:
+            msg = 'Error loading tree'
+            raise RepositoryError(msg) from e
+        
+        return self._diff_trees(commit_tree, dir_tree)
 
     def head_file(self) -> Path:
         """Get the path to the HEAD file within the repository.
