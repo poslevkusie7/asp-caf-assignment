@@ -347,7 +347,7 @@ class Repository:
 
     @requires_repo
     def add_branch(self, branch: str) -> None:
-        """Add a new branch to the repository, initialized to be an empty reference.
+        """Add a new branch to the repository, initialized to point at the current HEAD commit if any.
 
         :param branch: The name of the branch to add.
         :raises ValueError: If the branch name is empty.
@@ -359,8 +359,16 @@ class Repository:
         if self.branch_exists(SymRef(branch)):
             msg = f'Branch "{branch}" already exists'
             raise RepositoryError(msg)
+        branch_path = self.heads_dir() / branch
+        branch_path.touch()
 
-        (self.heads_dir() / branch).touch()
+        try:
+            head_commit = self.head_commit()
+        except RepositoryError:
+            head_commit = None
+
+        if head_commit is not None:
+            write_ref(branch_path, head_commit)
 
     @requires_repo
     def delete_branch(self, branch: str) -> None:
