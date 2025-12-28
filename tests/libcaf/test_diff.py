@@ -391,5 +391,3 @@ def test_diff_commit_dir_ignores_repo_dir(temp_repo: Repository) -> None:
     flat = flatten_diffs(diff_result)
 
     assert not any(d.record.name == 'INTERNAL.txt' for d in flat)
-    
-from libcaf.ref import SymRef
