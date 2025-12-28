@@ -296,26 +296,25 @@ def diff(**kwargs) -> int:
     repo = _repo_from_cli_kwargs(kwargs)
     commit1 = kwargs.get('commit1')
     commit2 = kwargs.get('commit2')
-    
-    if commit1 is None and commit2 is not None:
-        _print_error('Both commit1 and commit2 are required for diff.')
-        return -1
 
-    if not commit1:
-        _print_error('commit1 is required for diff.')
+    if commit1 is None:
+        _print_error('Both commit1 and commit2 parameters are required for diff.')
         return -1
-
 
     try:
-        if commit2:
-                diffs = repo.diff_commits(commit1, commit2)
+        if commit2 is not None:
+            diffs = repo.diff_commits(commit1, commit2)
+
+            if not diffs:
+                _print_success('No changes detected between commits.')
+                return 0
         else:
             working_dir_path = Path(kwargs.get('working_dir_path', '.'))
             diffs = repo.diff_commit_dir(commit1, working_dir_path)
 
-        if not diffs:
-            _print_success('No changes detected between commits.')
-            return 0
+            if not diffs:
+                _print_success('No changes detected.')
+                return 0
 
         _print_diffs([(diffs, 0)])
 

@@ -149,7 +149,11 @@ def test_diff_missing_parameters(temp_repo: Repository, capsys: CaptureFixture[s
     assert 'Both commit1 and commit2' in capsys.readouterr().err
     assert cli_commands.diff(working_dir_path=temp_repo.working_dir,
                              commit1=None, commit2=None) == -1
-    assert 'commit1 is required' in capsys.readouterr().err
+    assert 'Both commit1 and commit2' in capsys.readouterr().err
+    assert cli_commands.diff(working_dir_path=temp_repo.working_dir,
+                             commit1='abc123', commit2=None) == -1
+    assert 'Repository error' in capsys.readouterr().err
+
 
 
 def test_diff_no_changes(temp_repo: Repository, parse_commit_hash: Callable[[], str],
@@ -219,29 +223,8 @@ def test_diff_commit_vs_working_dir_supported(temp_repo: Repository, parse_commi
 
     # no working-dir changes => no diffs
     assert cli_commands.diff(working_dir_path=temp_repo.working_dir,
-                             commit1=commit_hash, commit2=None) == 0
+                             commit1=commit_hash) == 0
     assert 'No changes detected' in capsys.readouterr().out
-    
-def test_diff_commit_vs_working_dir_no_changes(temp_repo: Repository, parse_commit_hash: Callable[[], str],
-                                               capsys: CaptureFixture[str]) -> None:
-    (temp_repo.working_dir / 'a.txt').write_text('A')
-
-    assert cli_commands.commit(
-        working_dir_path=temp_repo.working_dir,
-        author='Test',
-        message='Commit A'
-    ) == 0
-    commit_hash = parse_commit_hash()
-
-    # No working-dir changes
-    assert cli_commands.diff(
-        working_dir_path=temp_repo.working_dir,
-        commit1=commit_hash,
-        commit2=None
-    ) == 0
-
-    out = capsys.readouterr().out
-    assert 'No changes detected' in out
     
 def test_diff_commit_vs_working_dir_shows_changes(temp_repo: Repository, parse_commit_hash: Callable[[], str], 
                                                   capsys: CaptureFixture[str]) -> None:
@@ -261,7 +244,6 @@ def test_diff_commit_vs_working_dir_shows_changes(temp_repo: Repository, parse_c
     assert cli_commands.diff(
         working_dir_path=temp_repo.working_dir,
         commit1=commit_hash,
-        commit2=None
     ) == 0
 
     out = capsys.readouterr().out

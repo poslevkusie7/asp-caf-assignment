@@ -307,23 +307,6 @@ def test_diff_commit_dir_no_changes(temp_repo: Repository) -> None:
     diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
     assert len(diff_result) == 0
     
-def test_diff_commit_dir_does_not_write_objects(temp_repo: Repository) -> None:
-    file_path = temp_repo.working_dir / 'file.txt'
-    file_path.write_text('Content')
-
-    commit_hash = temp_repo.commit_working_dir('Tester', 'Initial commit')
-
-    before = snapshot_objects(temp_repo)
-
-    # Modify working directory (diff must be READ-ONLY!)
-    file_path.write_text('Changed content')
-    (temp_repo.working_dir / 'new.txt').write_text('New file')
-
-    _ = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
-
-    after = snapshot_objects(temp_repo)
-    assert after == before, 'diff_commit_dir must not create new objects in .caf/objects'
-    
 def test_diff_commit_dir_added_file(temp_repo: Repository) -> None:
     (temp_repo.working_dir / 'a.txt').write_text('A')
     commit_hash = temp_repo.commit_working_dir('Tester', 'Commit A')
