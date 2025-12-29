@@ -2,6 +2,24 @@ from collections.abc import Sequence
 
 from libcaf.repository import (AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff, Repository)
 
+def snapshot_objects(temp_repo: Repository) -> set[str]:
+    objects_dir = temp_repo.objects_dir()
+    if not objects_dir.exists():
+        return set()
+    return {p.name for p in objects_dir.iterdir() if p.is_file()}
+
+
+def flatten_diffs(diffs: Sequence[Diff]) -> list[Diff]:
+    out: list[Diff] = []
+
+    def walk(d: Diff) -> None:
+        out.append(d)
+        for c in d.children:
+            walk(c)
+
+    for d in diffs:
+        walk(d)
+    return out
 
 def split_diffs_by_type(diffs: Sequence[Diff]) -> \
         tuple[list[AddedDiff],
@@ -279,3 +297,97 @@ def test_diff_moved_file_removed_first(temp_repo: Repository) -> None:
     assert len(modified_child.moved_to.parent.children) == 1
     assert modified_child.moved_to.parent.record.name == 'dir1'
     assert modified_child.moved_to.record.name == 'file_c.txt'
+
+def test_diff_commit_dir_no_changes(temp_repo: Repository) -> None:
+    file_path = temp_repo.working_dir / 'file.txt'
+    file_path.write_text('Same content')
+
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Initial commit')
+
+    diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    assert len(diff_result) == 0
+    
+def test_diff_commit_dir_added_file(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a.txt').write_text('A')
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Commit A')
+
+    (temp_repo.working_dir / 'b.txt').write_text('B')
+
+    diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    added, modified, moved_to, moved_from, removed = split_diffs_by_type(diff_result)
+
+    assert len(added) == 1
+    assert added[0].record.name == 'b.txt'
+    assert len(modified) == 0
+    assert len(removed) == 0
+    assert len(moved_to) == 0
+    assert len(moved_from) == 0
+    
+def test_diff_commit_dir_removed_file(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a.txt').write_text('A')
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Commit A')
+
+    (temp_repo.working_dir / 'a.txt').unlink()
+
+    diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    added, modified, moved_to, moved_from, removed = split_diffs_by_type(diff_result)
+
+    assert len(removed) == 1
+    assert removed[0].record.name == 'a.txt'
+    assert len(added) == 0
+    assert len(modified) == 0
+    assert len(moved_to) == 0
+    assert len(moved_from) == 0
+
+def test_diff_commit_dir_modified_file(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a.txt').write_text('Old')
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Commit old')
+
+    (temp_repo.working_dir / 'a.txt').write_text('New')
+
+    diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    added, modified, moved_to, moved_from, removed = split_diffs_by_type(diff_result)
+
+    assert len(modified) == 1
+    assert modified[0].record.name == 'a.txt'
+    assert len(added) == 0
+    assert len(removed) == 0
+    assert len(moved_to) == 0
+    assert len(moved_from) == 0
+
+def test_diff_commit_dir_nested_changes(temp_repo: Repository) -> None:
+    subdir = temp_repo.working_dir / 'subdir'
+    subdir.mkdir()
+    (subdir / 'file.txt').write_text('Initial')
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Commit nested')
+
+    (subdir / 'file.txt').write_text('Modified')
+    (subdir / 'new.txt').write_text('New file')
+
+    diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    added, modified, moved_to, moved_from, removed = split_diffs_by_type(diff_result)
+
+    # Expect the directory to be modified, with children diffs
+    assert len(modified) == 1
+    assert modified[0].record.name == 'subdir'
+
+    child_types = [type(c) for c in modified[0].children]
+    child_names = [c.record.name for c in modified[0].children]
+
+    assert 'file.txt' in child_names
+    assert 'new.txt' in child_names
+    assert any(isinstance(c, ModifiedDiff) and c.record.name == 'file.txt' for c in modified[0].children)
+    assert any(isinstance(c, AddedDiff) and c.record.name == 'new.txt' for c in modified[0].children)
+
+def test_diff_commit_dir_ignores_repo_dir(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a.txt').write_text('A')
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Commit A')
+
+    # Create internal file inside .caf
+    internal = temp_repo.repo_dir / 'INTERNAL.txt'
+    internal.write_text('ignore me')
+
+    diff_result = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    flat = flatten_diffs(diff_result)
+
+    assert not any(d.record.name == 'INTERNAL.txt' for d in flat)
