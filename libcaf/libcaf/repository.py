@@ -561,6 +561,68 @@ class Repository:
         root_tree = trees_by_path[path]
         return root_tree, root_hash, tree_lookup
 
+    def _resolve_tree_spec(self, spec: Ref | str | Path | None) -> tuple[Tree, str, dict[str, Tree] | None]:
+        """Resolve a spec (ref/commit-ish or filesystem path) into a Tree.
+
+        Rules:
+        - spec is None => treat as HEAD.
+        - if spec points to an existing filesystem path (dir or file) => build an in-memory tree WITHOUT writing objects.
+        - otherwise => treat spec as a ref/commit-ish, load commit + tree from object DB.
+
+        Returns (tree, tree_hash, tree_lookup).
+        tree_lookup is only provided for filesystem-built directory trees.
+        """
+        if spec is None:
+            spec = self.head_ref()
+
+        def _existing_path(x: str | Path) -> Path | None:
+            p = Path(x)
+            if p.exists():
+                return p
+            if not p.is_absolute():
+                p2 = self.working_dir / p
+                if p2.exists():
+                    return p2
+            return None
+
+        existing: Path | None = None
+        match spec:
+            case Path() as p:
+                existing = _existing_path(p)
+            case str() as s:
+                existing = _existing_path(s)
+            case _:
+                existing = None
+
+        # Filesystem path mode
+        if existing is not None:
+            if existing.is_dir():
+                fs_tree, fs_hash, lookup = self.build_tree_from_fs(existing)
+                return fs_tree, fs_hash, lookup
+
+            if existing.is_file():
+                blob_hash = hash_file(existing)
+                tree = Tree({existing.name: TreeRecord(TreeRecordType.BLOB, blob_hash, existing.name)})
+                tree_hash = hash_object(tree)
+                return tree, tree_hash, None
+
+            msg = f'{existing} is neither a file nor a directory'
+            raise RepositoryError(msg)
+
+        # Ref/commit-ish mode
+        try:
+            commit_hash = self.resolve_ref(spec)
+            if commit_hash is None:
+                msg = f'Cannot resolve reference {spec}'
+                raise RefError(msg)
+
+            commit = load_commit(self.objects_dir(), commit_hash)
+            tree = load_tree(self.objects_dir(), commit.tree_hash)
+            return tree, commit.tree_hash, None
+        except Exception as e:
+            msg = 'Error loading commit / tree'
+            raise RepositoryError(msg) from e
+
     @requires_repo
     def diff_commits(self, commit_ref1: Ref | None = None, commit_ref2: Ref | None = None) -> Sequence[Diff]:
         """Generate a diff between two commits in the repository.
@@ -570,39 +632,13 @@ class Repository:
         :return: A list of Diff objects representing the differences between the two commits.
         :raises RepositoryError: If a commit or tree cannot be loaded.
         :raises RepositoryNotFoundError: If the repository does not exist."""
-        if commit_ref1 is None:
-            commit_ref1 = self.head_ref()
-        if commit_ref2 is None:
-            commit_ref2 = self.head_ref()
+        tree1, tree_hash1, lookup1 = self._resolve_tree_spec(commit_ref1)
+        tree2, tree_hash2, lookup2 = self._resolve_tree_spec(commit_ref2)
 
-        try:
-            commit_hash1 = self.resolve_ref(commit_ref1)
-            commit_hash2 = self.resolve_ref(commit_ref2)
-
-            if commit_hash1 is None:
-                msg = f'Cannot resolve reference {commit_ref1}'
-                raise RefError(msg)
-            if commit_hash2 is None:
-                msg = f'Cannot resolve reference {commit_ref2}'
-                raise RefError(msg)
-
-            commit1 = load_commit(self.objects_dir(), commit_hash1)
-            commit2 = load_commit(self.objects_dir(), commit_hash2)
-        except Exception as e:
-            msg = 'Error loading commit'
-            raise RepositoryError(msg) from e
-
-        if commit1.tree_hash == commit2.tree_hash:
+        if tree_hash1 == tree_hash2:
             return []
 
-        try:
-            tree1 = load_tree(self.objects_dir(), commit1.tree_hash)
-            tree2 = load_tree(self.objects_dir(), commit2.tree_hash)
-        except Exception as e:
-            msg = 'Error loading tree'
-            raise RepositoryError(msg) from e
-        
-        return self._diff_trees(tree1, tree2)
+        return self._diff_trees(tree1, tree2, tree_lookup1=lookup1, tree_lookup2=lookup2)
     
     @requires_repo
     def diff_commit_dir(self, commit_ref: Ref | None = None, path: Path | None = None) -> Sequence[Diff]:
@@ -613,33 +649,28 @@ class Repository:
         :return: A list of Diff objects representing the differences between the two commits.
         :raises RepositoryError: If a commit or tree cannot be loaded.
         :raises RepositoryNotFoundError: If the repository does not exist."""
-        if commit_ref is None:
-            commit_ref = self.head_ref()
-            
         if path is None:
             path = self.working_dir
 
-        try:
-            commit_hash = self.resolve_ref(commit_ref)
+        commit_tree, commit_hash, lookup1 = self._resolve_tree_spec(commit_ref)
+        dir_tree, dir_hash, lookup2 = self._resolve_tree_spec(path)
 
-            if commit_hash is None:
-                msg = f'Cannot resolve reference {commit_ref}'
-                raise RefError(msg)
-
-            commit = load_commit(self.objects_dir(), commit_hash)
-            commit_tree = load_tree(self.objects_dir(), commit.tree_hash)
-        except Exception as e:
-            msg = 'Error loading commit / tree'
-            raise RepositoryError(msg) from e
-
-        dir_tree, dir_tree_hash, mem_trees = self.build_tree_from_fs(path)
-
-        if commit.tree_hash == dir_tree_hash:
+        if commit_hash == dir_hash:
             return []
 
-        # IMPORTANT: Do NOT load the directory tree from the object database.
-        # The directory tree was built in-memory and is not stored in `.caf/objects`.
-        return self._diff_trees(commit_tree, dir_tree, tree_lookup2=mem_trees)
+        return self._diff_trees(commit_tree, dir_tree, tree_lookup1=lookup1, tree_lookup2=lookup2)
+
+
+    @requires_repo
+    def diff_any(self, spec1: Ref | str | Path | None = None, spec2: Ref | str | Path | None = None) -> Sequence[Diff]:
+        """Diff between any two specs, where each spec can be a ref/commit-ish or a filesystem path."""
+        tree1, hash1, lookup1 = self._resolve_tree_spec(spec1)
+        tree2, hash2, lookup2 = self._resolve_tree_spec(spec2)
+
+        if hash1 == hash2:
+            return []
+
+        return self._diff_trees(tree1, tree2, tree_lookup1=lookup1, tree_lookup2=lookup2)
     @requires_repo
     def _diff_trees(self, tree1: Tree | None, tree2: Tree | None, *, tree_lookup1: dict[str, Tree] | None = None,
                     tree_lookup2: dict[str, Tree] | None = None) -> Sequence[Diff]:

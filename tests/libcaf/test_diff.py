@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from pathlib import Path
 
 from libcaf.repository import (AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff, Repository)
 
@@ -391,3 +392,85 @@ def test_diff_commit_dir_ignores_repo_dir(temp_repo: Repository) -> None:
     flat = flatten_diffs(diff_result)
 
     assert not any(d.record.name == 'INTERNAL.txt' for d in flat)
+
+
+def test_diff_any_ref_vs_ref_matches_diff_commits(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a.txt').write_text('A')
+    commit1 = temp_repo.commit_working_dir('Tester', 'Commit A')
+
+    (temp_repo.working_dir / 'a.txt').write_text('B')
+    commit2 = temp_repo.commit_working_dir('Tester', 'Commit B')
+
+    diffs_commits = temp_repo.diff_commits(commit1, commit2)
+    diffs_any = temp_repo.diff_any(commit1, commit2)
+
+    # For this simple case, both APIs should agree on the diff structure.
+    assert len(diffs_any) == len(diffs_commits)
+
+
+def test_diff_any_ref_vs_workdir_matches_diff_commit_dir(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a.txt').write_text('A')
+    commit_hash = temp_repo.commit_working_dir('Tester', 'Commit A')
+
+    # Working dir change
+    (temp_repo.working_dir / 'a.txt').write_text('A2')
+    (temp_repo.working_dir / 'b.txt').write_text('B')
+
+    diffs_dir = temp_repo.diff_commit_dir(commit_hash, temp_repo.working_dir)
+    diffs_any = temp_repo.diff_any(commit_hash, temp_repo.working_dir)
+
+    # Both should show the same high-level change types.
+    added1, modified1, moved_to1, moved_from1, removed1 = split_diffs_by_type(diffs_dir)
+    added2, modified2, moved_to2, moved_from2, removed2 = split_diffs_by_type(diffs_any)
+
+    assert [d.record.name for d in added2] == [d.record.name for d in added1]
+    assert [d.record.name for d in modified2] == [d.record.name for d in modified1]
+    assert [d.record.name for d in removed2] == [d.record.name for d in removed1]
+    assert len(moved_to2) == len(moved_to1)
+    assert len(moved_from2) == len(moved_from1)
+
+
+def test_diff_any_path_vs_path_detects_changes(temp_repo: Repository) -> None:
+    dir1 = temp_repo.working_dir / 'dir1_any'
+    dir2 = temp_repo.working_dir / 'dir2_any'
+    dir1.mkdir()
+    dir2.mkdir()
+
+    # Same filename, different content => Modified
+    (dir1 / 'same.txt').write_text('v1')
+    (dir2 / 'same.txt').write_text('v2')
+
+    # Present only in dir1 => Removed
+    (dir1 / 'only1.txt').write_text('only in 1')
+
+    # Present only in dir2 => Added
+    (dir2 / 'only2.txt').write_text('only in 2')
+
+    diffs = temp_repo.diff_any(dir1, dir2)
+    added, modified, moved_to, moved_from, removed = split_diffs_by_type(diffs)
+
+    assert [d.record.name for d in added] == ['only2.txt']
+    assert [d.record.name for d in removed] == ['only1.txt']
+    assert [d.record.name for d in modified] == ['same.txt']
+    assert len(moved_to) == 0
+    assert len(moved_from) == 0
+
+
+def test_diff_any_does_not_write_objects_when_paths_used(temp_repo: Repository) -> None:
+    # Ensure we have at least one commit (so objects dir exists)
+    (temp_repo.working_dir / 'base.txt').write_text('base')
+    _ = temp_repo.commit_working_dir('Tester', 'Base commit')
+
+    before = snapshot_objects(temp_repo)
+
+    dir1 = temp_repo.working_dir / 'p1_any'
+    dir2 = temp_repo.working_dir / 'p2_any'
+    dir1.mkdir()
+    dir2.mkdir()
+    (dir1 / 'a.txt').write_text('A')
+    (dir2 / 'a.txt').write_text('B')
+
+    _ = temp_repo.diff_any(dir1, dir2)
+
+    after = snapshot_objects(temp_repo)
+    assert after == before, 'diff_any must not create new objects in .caf/objects when diffing paths'
