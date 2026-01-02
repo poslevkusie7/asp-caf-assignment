@@ -434,11 +434,12 @@ class Repository:
         head_ref = self.head_ref()
         branch = head_ref if isinstance(head_ref, SymRef) else None
         parent_commit_ref = self.head_commit()
+        parents = [parent_commit_ref] if parent_commit_ref else []
 
         # Save the current working directory as a tree
         tree_hash = self.save_dir(self.working_dir)
 
-        commit = Commit(tree_hash, author, message, int(datetime.now().timestamp()), parent_commit_ref)
+        commit = Commit(tree_hash, author, message, int(datetime.now().timestamp()), parents)
         commit_ref = HashRef(hash_object(commit))
 
         save_commit(self.objects_dir(), commit)
@@ -468,7 +469,7 @@ class Repository:
         except Exception as e:
             msg = f'Error loading commit {current_hash}'
             raise RepositoryError(msg) from e
-
+    
     def _resolve_tree_spec(self, spec: Ref | str | Path | None) -> tuple[Tree, str, dict[str, Tree] | None]:
         """Resolve a diff spec into a Tree.
 
