@@ -1,13 +1,14 @@
 """libcaf repository management."""
 
 import shutil
+import json
 from collections import deque
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps, partial
 from pathlib import Path
-from typing import Concatenate
+from typing import Concatenate, Any
 
 
 from . import Blob, Commit, Tree, TreeRecord, TreeRecordType
@@ -105,6 +106,38 @@ class Repository:
 
         :return: The path to the tags directory."""
         return self.refs_dir() / TAGS_DIR
+
+    def index_path(self) -> Path:
+        """Get the path to the index file within the repository.
+        
+        :return: The path to the index file (JSON)."""
+        return self.repo_path() / 'index'
+
+    @requires_repo
+    def read_index(self) -> dict[str, dict[str, Any]]:
+        """Read the index file.
+        
+        :return: A dictionary representing the index content.
+        :raises RepositoryError: If the index file contains invalid JSON."""
+        index_path = self.index_path()
+        if not index_path.exists():
+            return {}
+            
+        try:
+            with index_path.open('r') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            msg = f'Invalid index file: {e}'
+            raise RepositoryError(msg) from e
+
+    @requires_repo
+    def write_index(self, index_data: dict[str, dict[str, Any]]) -> None:
+        """Write the index file.
+        
+        :param index_data: The dictionary to write to the index file."""
+        index_path = self.index_path()
+        with index_path.open('w') as f:
+            json.dump(index_data, f, indent=2, sort_keys=True)
 
     @staticmethod
     def requires_repo[**P, R](func: Callable[Concatenate['Repository', P], R]) -> \
