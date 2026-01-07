@@ -157,6 +157,52 @@ class Repository:
         with index_path.open('w') as f:
             json.dump(index_data, f, indent=2, sort_keys=True)
 
+    @requires_repo
+    def update_index(self, path: Path | str) -> None:
+        """Update the index with the content of a file or directory.
+        
+        :param path: The path to the file or directory to add to the index.
+        :raises ValueError: If the path does not exist.
+        :raises RepositoryError: If the index cannot be updated."""
+        path = Path(path).resolve()
+        
+        if not path.exists():
+            msg = f'Path {path} does not exist.'
+            raise ValueError(msg)
+            
+        # Ensure path is within the working directory
+        try:
+            path.relative_to(self.working_dir)
+        except ValueError as e:
+            msg = f'Path {path} is outside the repository working directory.'
+            raise ValueError(msg) from e
+            
+        index = self.read_index()
+
+        def _update_file(file_path: Path) -> None:
+            # Skip .caf directory
+            if self.repo_dir.name in file_path.parts:
+                return
+
+            blob = self.save_file_content(file_path)
+            rel_path = str(file_path.relative_to(self.working_dir))
+            
+            index[rel_path] = {
+                'hash': blob.hash
+            }
+
+        if path.is_file():
+            _update_file(path)
+        elif path.is_dir():
+            if path.name == self.repo_dir.name:
+                pass # Skip adding the repo directory itself
+            else:
+                for item in path.rglob('*'):
+                    if item.is_file():
+                        _update_file(item)
+                    
+        self.write_index(index)
+
 
 
     @requires_repo
