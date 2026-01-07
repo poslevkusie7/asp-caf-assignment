@@ -466,7 +466,9 @@ class Repository:
                 commit = load_commit(self.objects_dir(), current_hash)
                 yield LogEntry(HashRef(current_hash), commit)
 
-                current_hash = HashRef(commit.parent) if commit.parent else None
+                # current_hash = HashRef(commit.parent) if commit.parent else None
+                parents = getattr(commit, "parents", None)
+                current_hash = HashRef(parents[0]) if parents else None
         except Exception as e:
             msg = f'Error loading commit {current_hash}'
             raise RepositoryError(msg) from e
