@@ -16,6 +16,7 @@ from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LEN
 from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
 from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
+from .checkout import checkout as checkout_
 
 
 class RepositoryError(Exception):
@@ -583,8 +584,24 @@ class Repository:
             return None
 
         return self.diff(head_commit, self.working_dir)
+    
+    def checkout(self, target: str) -> None:
+        """Switch branches or restore working tree files.
 
-
+        :param target: The branch name or commit hash to checkout.
+        :raises RepositoryError: If checkout fails."""
+        resolved_hash = self.resolve_ref(target)
+        if not resolved_hash:
+            msg = f"Cannot resolve reference{target}"
+            raise RepositoryError(msg)
+        
+        checkout_(self. target)
+        
+        if target in self.branches():
+            write_ref(self.head_file(), branch_ref(target))
+        else:
+            write_ref(self.head_file(), resolved_hash)
+        
     def head_file(self) -> Path:
         """Get the path to the HEAD file within the repository.
 
