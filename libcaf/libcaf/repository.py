@@ -592,10 +592,10 @@ class Repository:
         :raises RepositoryError: If checkout fails."""
         resolved_hash = self.resolve_ref(target)
         if not resolved_hash:
-            msg = f"Cannot resolve reference{target}"
+            msg = f"Cannot resolve reference {target}"
             raise RepositoryError(msg)
         
-        checkout_(self. target)
+        checkout_(self, resolved_hash)
         
         if target in self.branches():
             write_ref(self.head_file(), branch_ref(target))
