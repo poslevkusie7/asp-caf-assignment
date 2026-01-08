@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps, partial
 from pathlib import Path
-from typing import Concatenate, Any
+from typing import Concatenate, TypedDict
 
 
 from . import Blob, Commit, Tree, TreeRecord, TreeRecordType
@@ -17,6 +17,18 @@ from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LEN
 from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
 from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
+
+
+class IndexEntry(TypedDict):
+    """Represents a single entry in the index file.
+    
+    Each entry maps a file path to its blob hash.
+    """
+    hash: str
+
+
+Index = dict[str, IndexEntry]
+"""Type alias for the index structure: maps file paths to their index entries."""
 
 
 class RepositoryError(Exception):
@@ -132,7 +144,7 @@ class Repository:
         return self.repo_path() / INDEX_FILE
 
     @requires_repo
-    def read_index(self) -> dict[str, dict[str, Any]]:
+    def read_index(self) -> Index:
         """Read the index file.
         
         :return: A dictionary representing the index content.
@@ -149,7 +161,7 @@ class Repository:
             raise RepositoryError(msg) from e
 
     @requires_repo
-    def write_index(self, index_data: dict[str, dict[str, Any]]) -> None:
+    def write_index(self, index_data: Index) -> None:
         """Write the index file.
         
         :param index_data: The dictionary to write to the index file."""
