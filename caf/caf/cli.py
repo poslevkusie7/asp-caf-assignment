@@ -66,6 +66,19 @@ def cli() -> None:
             'help': '✅ Create a new commit',
         },
 
+        'add': {
+            'func': cli_commands.add,
+            'args': {
+                **_repo_args,
+                'files': {
+                    'type': str,
+                    'help': '📄 Files to add',
+                    'nargs': '+',
+                },
+            },
+            'help': '➕ Add file contents to the index',
+        },
+
         'hash_file': {
             'func': cli_commands.hash_file,
             'args': {
@@ -213,7 +226,10 @@ def cli() -> None:
                 command_sub.add_argument(f'--{arg_name}', type=arg_type, help=f'{arg_help} (default: %(default)s)',
                                          default=arg_default)
             else:
-                command_sub.add_argument(arg_name, type=arg_type, help=arg_help)
+                kwargs = {'type': arg_type, 'help': arg_help}
+                if 'nargs' in arg_info:
+                    kwargs['nargs'] = arg_info['nargs']
+                command_sub.add_argument(arg_name, **kwargs)
 
     command_args = parser.parse_args()
     if command_args.command is None:

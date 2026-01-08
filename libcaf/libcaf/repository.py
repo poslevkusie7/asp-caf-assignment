@@ -1,5 +1,6 @@
 """libcaf repository management."""
 
+import os
 import shutil
 from collections import deque
 from collections.abc import Callable, Generator, Sequence
@@ -12,11 +13,12 @@ from typing import Concatenate
 
 from . import Blob, Commit, Tree, TreeRecord, TreeRecordType
 from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LENGTH, HEADS_DIR, HEAD_FILE,
-                        OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR)
+                        INDEX_FILE, OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR)
 from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
 from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
 from .checkout import CheckoutError, apply_checkout, create_tree
+from . import index
 
 
 class RepositoryError(Exception):
@@ -411,8 +413,8 @@ class Repository:
         return HashRef(hashes[path])
 
     @requires_repo
-    def commit_working_dir(self, author: str, message: str) -> HashRef:
-        """Commit the current working directory to the repository.
+    def commit(self, author: str, message: str) -> HashRef:
+        """Commit the current index to the repository.
 
         :param author: The name of the commit author.
         :param message: The commit message.
@@ -437,8 +439,9 @@ class Repository:
         parent_commit_ref = self.head_commit()
         parents = [parent_commit_ref] if parent_commit_ref else []
 
-        # Save the current working directory as a tree
-        tree_hash = self.save_dir(self.working_dir)
+        # Build tree from index
+        index_data = self.read_index()
+        tree_hash = index.build_tree_from_index(index_data, self.objects_dir())
 
         commit = Commit(tree_hash, author, message, int(datetime.now().timestamp()), parents)
         commit_ref = HashRef(hash_object(commit))
@@ -449,6 +452,38 @@ class Repository:
             self.update_ref(branch, commit_ref)
 
         return commit_ref
+
+    @requires_repo
+    def commit_working_dir(self, author: str, message: str) -> HashRef:
+        """Commit the current working directory to the repository (Legacy).
+
+        :param author: The name of the commit author.
+        :param message: The commit message.
+        :return: A HashRef object representing the commit reference.
+        """
+        # 1. Recursively update index for all files in working dir
+        repo_name = self.repo_dir.name
+        fs_paths: set[str] = set()
+        
+        for root, dirs, files in os.walk(self.working_dir):
+            if repo_name in dirs:
+                dirs.remove(repo_name)
+            
+            for file in files:
+                file_path = Path(root) / file
+                self.update_index(file_path)
+                
+                # Normalize path to match index keys logic (use forward slashes)
+                rel_path = file_path.relative_to(self.working_dir)
+                fs_paths.add(rel_path.as_posix())
+
+        # 2. Remove files present in index but missing from FS
+        index_data = self.read_index()
+        for indexed_path in index_data:
+            if indexed_path not in fs_paths:
+                self.remove_from_index(indexed_path)
+
+        return self.commit(author, message)
 
     @requires_repo
     def log(self, tip: Ref | None = None) -> Generator[LogEntry, None, None]:
@@ -466,7 +501,7 @@ class Repository:
                 commit = load_commit(self.objects_dir(), current_hash)
                 yield LogEntry(HashRef(current_hash), commit)
 
-                current_hash = HashRef(commit.parent) if commit.parent else None
+                current_hash = HashRef(commit.parents[0]) if commit.parents else None
         except Exception as e:
             msg = f'Error loading commit {current_hash}'
             raise RepositoryError(msg) from e
@@ -624,6 +659,50 @@ class Repository:
 
         :return: The path to the HEAD file."""
         return self.repo_path() / HEAD_FILE
+
+    def index_path(self) -> Path:
+        """Get the path to the index file within the repository.
+
+        :return: The path to the index file."""
+        return self.repo_path() / INDEX_FILE
+
+    @requires_repo
+    def update_index(self, path: Path | str) -> None:
+        """Update the index with a file path.
+
+        This method generates a blob from the file content, saves it, and updates
+        the index with the repository-relative path and the new blob hash.
+
+        :param path: The file path to add or update in the index. Can be absolute
+            or relative to the working directory.
+        :raises ValueError: If the path is inside the repository directory (.caf).
+        :raises RepositoryNotFoundError: If the repository does not exist.
+        """
+        index.update_index(path, self.index_path(), self.working_dir, self.repo_dir.name, self.objects_dir())
+
+    @requires_repo
+    def remove_from_index(self, path: Path | str) -> None:
+        """Remove a file path from the index.
+
+        :param path: The file path to remove from the index. Can be absolute
+            or relative to the working directory.
+        :raises ValueError: If the path is inside the repository directory (.caf).
+        :raises RepositoryNotFoundError: If the repository does not exist.
+        """
+        index.update_index(path, self.index_path(), self.working_dir, self.repo_dir.name, remove=True)
+
+    @requires_repo
+    def read_index(self) -> dict[str, str]:
+        """Read the index file and return a dictionary of paths to hashes.
+
+        This method reads the index file line-by-line and parses each entry.
+        The index file format is: PATH HASH (one entry per line, sorted alphabetically).
+
+        :return: A dictionary mapping file paths (repository-relative) to their
+            SHA-1 hashes. Returns an empty dictionary if the index file does not exist.
+        :raises RepositoryNotFoundError: If the repository does not exist.
+        """
+        return index.read_index(self.index_path())
 
 
 def branch_ref(branch: str) -> SymRef:

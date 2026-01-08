@@ -235,6 +235,54 @@ def branch(**kwargs) -> int:
     return 0
 
 
+def add(**kwargs) -> int:
+    repo = _repo_from_cli_kwargs(kwargs)
+    files = kwargs.get('files', [])
+
+    if not files:
+        _print_error('No files specified')
+        return -1
+
+    try:
+        final_file_paths: list[Path] = []
+        
+        repo_abs_path = repo.repo_dir.resolve()
+        # First expand directories to files
+        for file_path_str in files:
+            path = Path(file_path_str)
+            if not path.exists():
+                _print_error(f'File {path} does not exist.')
+                return -1
+            
+            if path.is_dir():
+                for sub_path in path.rglob('*'):
+                    if sub_path.is_file() and repo_abs_path not in sub_path.parents:
+                        final_file_paths.append(sub_path)
+            else:
+                final_file_paths.append(path)
+
+        for path in final_file_paths:
+            repo.update_index(path)
+            # Normalize path for display (relative to working dir if possible)
+            try:
+                display_path = path.resolve().relative_to(repo.working_dir)
+            except ValueError:
+                display_path = path
+            
+            _print_success(f'Added {display_path}')
+            
+        return 0
+    except RepositoryNotFoundError:
+        _print_error(f'No repository found at {repo.repo_path()}')
+        return -1
+    except RepositoryError as e:
+        _print_error(f'Repository error: {e}')
+        return -1
+    except ValueError as e:
+        _print_error(f'Error: {e}')
+        return -1
+
+
 def commit(**kwargs) -> int:
     repo = _repo_from_cli_kwargs(kwargs)
     author = kwargs.get('author')
