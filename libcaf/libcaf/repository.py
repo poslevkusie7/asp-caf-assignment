@@ -1,5 +1,7 @@
 """libcaf repository management."""
 
+import errno
+import fcntl
 import shutil
 import json
 from collections import deque
@@ -147,15 +149,23 @@ class Repository:
     def read_index(self) -> Index:
         """Read the index file.
         
-        :return: A dictionary representing the index content.
-        :raises RepositoryError: If the index file contains invalid JSON."""
+        :return: A dictionary mapping file paths to their index entries.
+        :raises RepositoryError: If the index file contains invalid JSON or lock cannot be acquired."""
         index_path = self.index_path()
         if not index_path.exists():
             return {}
             
         try:
             with index_path.open('r') as f:
-                return json.load(f)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                except OSError as e:
+                    msg = f'Failed to acquire lock on index file: {e}'
+                    raise RepositoryError(msg) from e
+                try:
+                    return json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except json.JSONDecodeError as e:
             msg = f'Invalid index file: {e}'
             raise RepositoryError(msg) from e
@@ -164,10 +174,23 @@ class Repository:
     def write_index(self, index_data: Index) -> None:
         """Write the index file.
         
-        :param index_data: The dictionary to write to the index file."""
+        :param index_data: The dictionary to write to the index file.
+        :raises RepositoryError: If the lock cannot be acquired."""
         index_path = self.index_path()
-        with index_path.open('w') as f:
-            json.dump(index_data, f, indent=2, sort_keys=True)
+        try:
+            with index_path.open('w') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                except OSError as e:
+                    msg = f'Failed to acquire lock on index file: {e}'
+                    raise RepositoryError(msg) from e
+                try:
+                    json.dump(index_data, f, indent=2, sort_keys=True)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError as e:
+            msg = f'Failed to write index file: {e}'
+            raise RepositoryError(msg) from e
 
     @requires_repo
     def update_index(self, path: Path | str) -> None:
@@ -189,31 +212,76 @@ class Repository:
             msg = f'Path {path} is outside the repository working directory.'
             raise ValueError(msg) from e
             
-        index = self.read_index()
-
-        def _update_file(file_path: Path) -> None:
-            # Skip .caf directory
-            if self.repo_dir.name in file_path.parts:
-                return
-
-            blob = self.save_file_content(file_path)
-            rel_path = str(file_path.relative_to(self.working_dir))
-            
-            index[rel_path] = {
-                'hash': blob.hash
-            }
-
-        if path.is_file():
-            _update_file(path)
-        elif path.is_dir():
-            if path.name == self.repo_dir.name:
-                pass # Skip adding the repo directory itself
+        index_path = self.index_path()
+        
+        # Use atomic read-modify-write with exclusive lock
+        # Open in r+ mode if exists, or create if doesn't exist
+        try:
+            if index_path.exists():
+                f = index_path.open('r+')
             else:
-                for item in path.rglob('*'):
-                    if item.is_file():
-                        _update_file(item)
+                # Create file if it doesn't exist
+                index_path.touch()
+                f = index_path.open('r+')
+        except OSError as e:
+            msg = f'Failed to open index file: {e}'
+            raise RepositoryError(msg) from e
+        
+        try:
+            # Acquire exclusive lock for entire operation
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except OSError as e:
+                f.close()
+                msg = f'Failed to acquire lock on index file: {e}'
+                raise RepositoryError(msg) from e
+            
+            try:
+                # Read current index state
+                try:
+                    f.seek(0)
+                    content = f.read()
+                    if content.strip():
+                        index: Index = json.loads(content)
+                    else:
+                        index = {}
+                except json.JSONDecodeError as e:
+                    msg = f'Invalid index file: {e}'
+                    raise RepositoryError(msg) from e
+                
+                # Perform modifications
+                def _update_file(file_path: Path) -> None:
+                    # Skip .caf directory
+                    if self.repo_dir.name in file_path.parts:
+                        return
+
+                    blob = self.save_file_content(file_path)
+                    rel_path = str(file_path.relative_to(self.working_dir))
                     
-        self.write_index(index)
+                    index[rel_path] = {
+                        'hash': blob.hash
+                    }
+
+                if path.is_file():
+                    _update_file(path)
+                elif path.is_dir():
+                    if path.name == self.repo_dir.name:
+                        pass # Skip adding the repo directory itself
+                    else:
+                        for item in path.rglob('*'):
+                            if item.is_file():
+                                _update_file(item)
+                
+                # Write updated index (while still holding lock)
+                f.seek(0)
+                f.truncate()
+                json.dump(index, f, indent=2, sort_keys=True)
+                f.flush()
+            finally:
+                # Release lock
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        finally:
+            f.close()
 
 
 
