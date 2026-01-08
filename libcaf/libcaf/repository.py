@@ -13,7 +13,7 @@ from typing import Concatenate, Any
 
 from . import Blob, Commit, Tree, TreeRecord, TreeRecordType
 from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LENGTH, HEADS_DIR, HEAD_FILE,
-                        OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR)
+                        INDEX_FILE, OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR)
 from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
 from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
@@ -128,8 +128,8 @@ class Repository:
     def index_path(self) -> Path:
         """Get the path to the index file within the repository.
         
-        :return: The path to the index file (JSON)."""
-        return self.repo_path() / 'index'
+        :return: The path to the index file."""
+        return self.repo_path() / INDEX_FILE
 
     @requires_repo
     def read_index(self) -> dict[str, dict[str, Any]]:

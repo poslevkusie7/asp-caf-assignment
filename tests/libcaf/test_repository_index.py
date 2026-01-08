@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
+from libcaf.constants import INDEX_FILE
 from libcaf.repository import Repository, RepositoryError
 from pytest import raises
 
 def test_index_path(temp_repo: Repository) -> None:
     """Test that index_path returns the correct path."""
-    expected_path = temp_repo.repo_path() / 'index'
+    expected_path = temp_repo.repo_path() / INDEX_FILE
     assert temp_repo.index_path() == expected_path
 
 def test_read_index_empty_when_missing(temp_repo: Repository) -> None:
