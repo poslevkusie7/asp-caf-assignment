@@ -52,24 +52,6 @@ class Repository:
         else:
             self.repo_dir = Path(repo_dir)
 
-    @staticmethod
-    def requires_repo[**P, R](func: Callable[Concatenate['Repository', P], R]) -> \
-            Callable[Concatenate['Repository', P], R]:
-        """Decorate a Repository method to ensure that the repository exists before executing the method.
-
-        :param func: The method to decorate.
-        :return: A wrapper function that checks for the repository's existence."""
-
-        @wraps(func)
-        def _verify_repo(self: 'Repository', *args: P.args, **kwargs: P.kwargs) -> R:
-            if not self.exists():
-                msg = f'Repository not initialized at {self.repo_path()}'
-                raise RepositoryNotFoundError(msg)
-
-            return func(self, *args, **kwargs)
-
-        return _verify_repo
-
     def init(self, default_branch: str = DEFAULT_BRANCH) -> None:
         """Initialize a new CAF repository in the working directory.
 
@@ -124,6 +106,24 @@ class Repository:
 
         :return: The path to the tags directory."""
         return self.refs_dir() / TAGS_DIR
+
+    @staticmethod
+    def requires_repo[**P, R](func: Callable[Concatenate['Repository', P], R]) -> \
+            Callable[Concatenate['Repository', P], R]:
+        """Decorate a Repository method to ensure that the repository exists before executing the method.
+
+        :param func: The method to decorate.
+        :return: A wrapper function that checks for the repository's existence."""
+
+        @wraps(func)
+        def _verify_repo(self: 'Repository', *args: P.args, **kwargs: P.kwargs) -> R:
+            if not self.exists():
+                msg = f'Repository not initialized at {self.repo_path()}'
+                raise RepositoryNotFoundError(msg)
+
+            return func(self, *args, **kwargs)
+
+        return _verify_repo
 
     def index_path(self) -> Path:
         """Get the path to the index file within the repository.
