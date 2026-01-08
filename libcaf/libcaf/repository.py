@@ -16,7 +16,7 @@ from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LEN
 from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
 from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
-from .checkout import checkout as checkout_
+from .checkout import CheckoutError, apply_checkout, create_tree
 
 
 class RepositoryError(Exception):
@@ -466,9 +466,7 @@ class Repository:
                 commit = load_commit(self.objects_dir(), current_hash)
                 yield LogEntry(HashRef(current_hash), commit)
 
-                # current_hash = HashRef(commit.parent) if commit.parent else None
-                parents = getattr(commit, "parents", None)
-                current_hash = HashRef(parents[0]) if parents else None
+                current_hash = HashRef(commit.parent) if commit.parent else None
         except Exception as e:
             msg = f'Error loading commit {current_hash}'
             raise RepositoryError(msg) from e
@@ -587,20 +585,37 @@ class Repository:
 
         return self.diff(head_commit, self.working_dir)
     
-    def checkout(self, target: str) -> None:
+    @requires_repo
+    def checkout(self, target: Ref) -> None:
         """Switch branches or restore working tree files.
 
-        :param target: The branch name or commit hash to checkout.
-        :raises RepositoryError: If checkout fails."""
+        :param target: The branch/tag ref or commit hash ref to checkout.
+        :raises CheckoutError: If working dir is not clean.
+        :raises RepositoryError: If resolving target fails."""
         resolved_hash = self.resolve_ref(target)
-        if not resolved_hash:
+        if resolved_hash is None:
             msg = f"Cannot resolve reference {target}"
             raise RepositoryError(msg)
         
-        checkout_(self, resolved_hash)
-        
-        if target in self.branches():
-            write_ref(self.head_file(), branch_ref(target))
+        head_commit = self.head_commit()
+        if head_commit is not None:
+            status = self.status()
+            if status:
+                raise CheckoutError("Working directory has changes; aborting checkout.")
+            
+            diffs = self.diff(head_commit, resolved_hash)
+            apply_checkout(self.objects_dir(), diffs, self.working_dir)
+        else:
+            for item in self.working_dir.iterdir():
+                if item.name == self.repo_dir.name:
+                    continue
+                raise CheckoutError("Working directory is not empty; aborting checkout.")
+            
+            commit = load_commit(self.objects_dir(), resolved_hash)
+            create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
+
+        if isinstance(target, SymRef) and str(target).startswith(f"{HEADS_DIR}/"):
+            write_ref(self.head_file(), target)
         else:
             write_ref(self.head_file(), resolved_hash)
         
