@@ -328,7 +328,7 @@ class Repository:
         if self.branch_exists(SymRef(branch)):
             msg = f'Branch "{branch}" already exists'
             raise RepositoryError(msg)
-
+        
         (self.heads_dir() / branch).touch()
 
     @requires_repo
@@ -598,22 +598,27 @@ class Repository:
             raise RepositoryError(msg)
         
         head_commit = self.head_commit()
-        if head_commit is not None:
-            status = self.diff(head_commit, self.working_dir)
-            if status:
-                raise CheckoutError("Working directory has changes; aborting checkout.")
-            
-            diffs = self.diff(head_commit, resolved_hash)
-            apply_checkout(self.objects_dir(), diffs, self.working_dir)
-        else:
-            for item in self.working_dir.iterdir():
-                if item.name == self.repo_dir.name:
-                    continue
-                raise CheckoutError("Working directory is not empty; aborting checkout.")
-            
-            commit = load_commit(self.objects_dir(), resolved_hash)
-            create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
-
+        try:
+            if head_commit is not None:
+                status = self.diff(head_commit, self.working_dir)
+                if status:
+                    raise CheckoutError("Working directory has changes; aborting checkout.")
+                
+                diffs = self.diff(head_commit, resolved_hash)
+                apply_checkout(self.objects_dir(), diffs, self.working_dir)
+            else:
+                for item in self.working_dir.iterdir():
+                    if item.name == self.repo_dir.name:
+                        continue
+                    raise CheckoutError("Working directory is not empty; aborting checkout.")
+                
+                commit = load_commit(self.objects_dir(), resolved_hash)
+                create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
+                
+        except(RuntimeError, OSError) as e:
+            msg = f"Could not load commit for reference '{target}': {e}"
+            raise RepositoryError(msg) from e
+        
         if isinstance(target, SymRef) and str(target).startswith(f"{HEADS_DIR}/"):
             write_ref(self.head_file(), target)
         else:

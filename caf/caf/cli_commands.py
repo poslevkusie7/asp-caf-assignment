@@ -7,9 +7,10 @@ from pathlib import Path
 
 from libcaf.constants import DEFAULT_BRANCH
 from libcaf.plumbing import hash_file as plumbing_hash_file
-from libcaf.ref import SymRef
-from libcaf.repository import (Repository, RepositoryError, RepositoryNotFoundError)
+from libcaf.ref import SymRef, HashRef, RefError
+from libcaf.repository import (Repository, RepositoryError, RepositoryNotFoundError, branch_ref, tag_ref)
 from libcaf.diff import (AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
+from libcaf.checkout import CheckoutError
 
 
 
@@ -374,3 +375,31 @@ def status(**kwargs) -> int:
         _print_error(f'Repository error: {e}')
         return -1
         
+def checkout(**kwargs) -> int:
+    repo = _repo_from_cli_kwargs(kwargs)
+    target = kwargs.get("target")
+    if not target:
+        _print_error("Target is required (branch name, tag name, or commit hash).")
+        return -1
+
+    try:
+        if target in repo.branches():
+            ref = branch_ref(target)
+        elif target in repo.tags():
+            ref = tag_ref(target)
+        else:
+            ref = HashRef(target)
+
+        repo.checkout(ref)
+        _print_success(f"Checked out {target}")
+        return 0
+
+    except RepositoryNotFoundError:
+        _print_error(f'No repository found at {repo.repo_path()}')
+        return -1
+    except CheckoutError as e:
+        _print_error(str(e))
+        return -1
+    except (RepositoryError, RefError) as e:
+        _print_error(f'{e}')
+        return -1

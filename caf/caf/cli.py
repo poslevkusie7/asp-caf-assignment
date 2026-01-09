@@ -194,6 +194,17 @@ def cli() -> None:
             },
             'help': '📌 Show working directory status vs HEAD',
         },
+        'checkout': {
+            'func': cli_commands.checkout,
+            'args': {
+                **_repo_args,
+                'target': {
+                    'type': str,
+                    'help': '🔀 Branch name, tag name, or commit hash to checkout',
+                },
+            },
+            'help': '🔀 Checkout a branch, tag, or commit',
+        },
     }
 
     # Register commands
