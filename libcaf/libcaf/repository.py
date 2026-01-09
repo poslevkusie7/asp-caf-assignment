@@ -599,7 +599,7 @@ class Repository:
         
         head_commit = self.head_commit()
         if head_commit is not None:
-            status = self.status()
+            status = self.diff(head_commit, self.working_dir)
             if status:
                 raise CheckoutError("Working directory has changes; aborting checkout.")
             
