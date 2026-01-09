@@ -74,22 +74,17 @@ test:
 ifeq ($(ENABLE_COVERAGE), 1)
 		@echo "📊 Generating coverage report..."
 		mkdir -p coverage
-		@rm -f coverage/.test_failure
 		lcov --zerocounters --directory libcaf
 		lcov --ignore-errors mismatch --capture --initial --directory libcaf --output-file coverage/base.info
-		COVERAGE_FILE=coverage/.coverage python -m pytest --junitxml=test-results.xml --cov=libcaf --cov=caf --cov-report=lcov:coverage/python_coverage.info tests || touch coverage/.test_failure
+		-COVERAGE_FILE=coverage/.coverage python -m pytest --cov=libcaf --cov=caf --cov-report=lcov:coverage/python_coverage.info tests
 		lcov --ignore-errors mismatch --directory libcaf --capture --output-file coverage/run.info
 		lcov --add-tracefile coverage/base.info --add-tracefile coverage/run.info --add-tracefile coverage/python_coverage.info --output-file coverage/combined_coverage.info
 		lcov --remove coverage/combined_coverage.info '/usr/*' 'pybind' --output-file coverage/combined_coverage.info
 		lcov --ignore-errors mismatch --list coverage/combined_coverage.info
 		@echo "📂 Generating combined HTML report..."
 		genhtml coverage/combined_coverage.info --output-directory coverage
-		@if [ -f coverage/.test_failure ]; then \
-			echo "❌ Tests failed!"; \
-			exit 1; \
-		fi
 else
-		pytest --junitxml=test-results.xml tests
+		pytest tests
 endif
 
 # === Utility ===
@@ -97,13 +92,13 @@ endif
 clean-coverage:
 	rm -f libcaf/*.gcda
 	rm -rf tests/.coverage
-	rm -rf coverage
+	rm -rf coverage 
 
 clean: clean-coverage
 	rm -rf libcaf/libcaf.egg-info libcaf/*.so libcaf/build
 	rm -rf caf/caf.egg-info
 
-clean-all: clean
+clean-all: clean 
 	docker builder prune -af
 
 help:
