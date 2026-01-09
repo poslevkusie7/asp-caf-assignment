@@ -14,3 +14,4 @@ assignment/artifacts/*
 coverage
 
 .envrc
+*.xml
