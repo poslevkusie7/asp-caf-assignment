@@ -33,6 +33,7 @@ class RemovedDiff(Diff):
 @dataclass
 class ModifiedDiff(Diff):
     """A modified tree record diff as part of a commit."""
+    new_record: TreeRecord | None = None
 
 
 @dataclass
@@ -148,7 +149,7 @@ def diff_trees(tree1: Tree | None, tree2: Tree | None, *, load_tree1: Callable[[
                     continue
 
                 if record1.type == TreeRecordType.TREE and record2.type == TreeRecordType.TREE:
-                    subtree_diff = ModifiedDiff(record1, parent_diff, [])
+                    subtree_diff = ModifiedDiff(record1, parent_diff, [], new_record=record2)
 
                     try:
                         sub1 = load_tree1(record1.hash)
@@ -160,7 +161,7 @@ def diff_trees(tree1: Tree | None, tree2: Tree | None, *, load_tree1: Callable[[
                     stack.append((sub1, sub2, subtree_diff))
                     parent_diff.children.append(subtree_diff)
                 else:
-                    parent_diff.children.append(ModifiedDiff(record1, parent_diff, []))
+                    parent_diff.children.append(ModifiedDiff(record1, parent_diff, [], new_record=record2))
 
         for name, record2 in records2.items():
             if name not in records1:
