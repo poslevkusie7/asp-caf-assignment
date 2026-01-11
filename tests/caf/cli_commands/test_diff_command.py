@@ -141,7 +141,7 @@ def test_diff_repo_error(temp_repo: Repository, capsys: CaptureFixture[str]) -> 
     assert cli_commands.diff(working_dir_path=temp_repo.working_dir,
                              commit1='abc123', commit2='def456') == -1
 
-    assert 'Repository error' in capsys.readouterr().err
+    assert 'No repository found' in capsys.readouterr().err
 
 
 def test_diff_missing_parameters(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:

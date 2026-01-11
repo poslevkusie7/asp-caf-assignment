@@ -401,5 +401,5 @@ def checkout(**kwargs) -> int:
         _print_error(str(e))
         return -1
     except (RepositoryError, RefError) as e:
-        _print_error(f'{e}')
+        _print_error(f'checkout: {e}')
         return -1

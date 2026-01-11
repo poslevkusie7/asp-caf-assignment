@@ -8,6 +8,9 @@ from caf import cli_commands
 
 
 def test_branch_command(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
+    (temp_repo.working_dir / 'a').touch()
+    temp_repo.commit_working_dir('Tester', 'Initial')
+    
     branches = ['branch_1', 'branch_2', 'branch_3', 'branch_4', 'branch_5']
 
     for branch in branches:
@@ -35,7 +38,6 @@ def test_branch_no_repo(temp_repo_dir: Path, capsys: CaptureFixture[str]) -> Non
 
 
 def test_branch_no_branches(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
-    (temp_repo.working_dir / DEFAULT_REPO_DIR / REFS_DIR / HEADS_DIR / DEFAULT_BRANCH).unlink()
     assert cli_commands.branch(working_dir_path=temp_repo.working_dir) == 0
 
     assert 'No branches found' in capsys.readouterr().out
@@ -45,10 +47,12 @@ def test_branch_repo_error(temp_repo: Repository, capsys: CaptureFixture[str]) -
     (temp_repo.working_dir / DEFAULT_REPO_DIR / HEAD_FILE).unlink()
     assert cli_commands.branch(working_dir_path=temp_repo.working_dir) == -1
 
-    assert 'Repository error' in capsys.readouterr().err
-
+    assert 'No repository found' in capsys.readouterr().err
 
 def test_branch_shows_current_branch_with_asterisk(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
+    (temp_repo.working_dir / 'a').touch()
+    temp_repo.commit_working_dir('Tester', 'Initial')
+    
     cli_commands.add_branch(working_dir_path=temp_repo.working_dir, branch_name='feature')
     cli_commands.add_branch(working_dir_path=temp_repo.working_dir, branch_name='develop')
 

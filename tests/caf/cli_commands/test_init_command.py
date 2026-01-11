@@ -14,9 +14,9 @@ def test_init_repository(temp_repo_dir: Path, branch_name: str) -> None:
 
     repo_path = temp_repo_dir / DEFAULT_REPO_DIR
     assert repo_path.exists()
-
+    
     main_branch = repo_path / REFS_DIR / HEADS_DIR / branch_name
-    assert main_branch.read_text() == ''
+    assert not main_branch.exists()
 
     head_file = repo_path / HEAD_FILE
     assert read_ref(head_file) == SymRef(f'{HEADS_DIR}/{branch_name}')
