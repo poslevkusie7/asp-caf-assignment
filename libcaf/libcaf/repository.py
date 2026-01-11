@@ -607,9 +607,7 @@ class Repository:
                 diffs = self.diff(head_commit, resolved_hash)
                 apply_checkout(self.objects_dir(), diffs, self.working_dir)
             else:
-                for item in self.working_dir.iterdir():
-                    if item.name == self.repo_dir.name:
-                        continue
+                if any(item.name != self.repo_dir.name for item in self.working_dir.iterdir()):
                     raise CheckoutError("Working directory is not empty; aborting checkout.")
                 
                 commit = load_commit(self.objects_dir(), resolved_hash)
