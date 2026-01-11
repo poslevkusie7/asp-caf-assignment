@@ -116,8 +116,57 @@ def diff_trees(tree1: Tree | None, tree2: Tree | None, *, load_tree1: Callable[[
     top_level_diff = Diff(TreeRecord(TreeRecordType.TREE, "", ""), None, [])
     stack: list[tuple[Tree | None, Tree | None, Diff]] = [(tree1, tree2, top_level_diff)]
 
-    potentially_added: dict[str, Diff] = {}
-    potentially_removed: dict[str, Diff] = {}
+    potentially_added: dict[str, AddedDiff] = {}
+    potentially_removed: dict[str, RemovedDiff] = {}
+
+    def _expand_diff(diff: AddedDiff | RemovedDiff, tree: Tree) -> None:
+        """Recursively expand an added or removed tree diff."""
+        for record in tree.records.values():
+            if isinstance(diff, AddedDiff):
+                child_diff = AddedDiff(record, diff, [])
+                potentially_added[record.hash] = child_diff
+                diff.children.append(child_diff)
+            else:
+                child_diff = RemovedDiff(record, diff, [])
+                potentially_removed[record.hash] = child_diff
+                diff.children.append(child_diff)
+            
+            if record.type == TreeRecordType.TREE:
+                try:
+                    # We need to load the subtree to continue expansion
+                    # For AddedDiff, we use load_tree2 (new tree)
+                    # For RemovedDiff, we use load_tree1 (old tree)
+                    loader = load_tree2 if isinstance(diff, AddedDiff) else load_tree1
+                    subtree = loader(record.hash)
+                    _expand_diff(child_diff, subtree)
+                except Exception:
+                    # If we can't load the tree, we just stop implementation for this branch
+                    # This might happen if the tree object is missing
+                    pass
+
+    def _promote_parents_to_modified(diff: Diff) -> None:
+        """Promote parent Added/Removed diffs to Modified diffs recursively."""
+        curr = diff.parent
+        while curr and curr.parent: # Stop before top_level_diff
+            if isinstance(curr, (AddedDiff, RemovedDiff)):
+                # Convert to ModifiedDiff
+                new_diff = ModifiedDiff(curr.record, curr.parent, curr.children, new_record=None)
+                
+                # We need to update the parent's children list to point to the new diff
+                # and update all children to point to the new parent
+                new_children_list = []
+                for child in curr.parent.children:
+                    if child is curr:
+                        new_children_list.append(new_diff)
+                    else:
+                        new_children_list.append(child)
+                curr.parent.children = new_children_list
+                
+                for child in curr.children:
+                    child.parent = new_diff
+                
+                curr = new_diff
+            curr = curr.parent
 
     while stack:
         current_tree1, current_tree2, parent_diff = stack.pop()
@@ -130,16 +179,42 @@ def diff_trees(tree1: Tree | None, tree2: Tree | None, *, load_tree1: Callable[[
                     added_diff = potentially_added[record1.hash]
                     del potentially_added[record1.hash]
 
+                    # Found a move!
                     local_diff = MovedToDiff(record1, parent_diff, [], None)
                     moved_from_diff = MovedFromDiff(added_diff.record, added_diff.parent, [], local_diff)
                     local_diff.moved_to = moved_from_diff
 
-                    added_diff.parent.children = (
-                        [_ if _.record.hash != record1.hash else moved_from_diff for _ in added_diff.parent.children]
-                    )
+                    # Fix up the added_diff side
+                    # 1. Update the child reference in the parent's children list
+                    added_parent = added_diff.parent
+                    new_children = []
+                    for child in added_parent.children:
+                        if child is added_diff:
+                            new_children.append(moved_from_diff)
+                        else:
+                            new_children.append(child)
+                    added_parent.children = new_children
+
+                    # 2. Promote parents if necessary (e.g. if we moved out of a Removed directory into an Added one)
+                    _promote_parents_to_modified(moved_from_diff)
+
+                    # 3. If the added diff had children (it was a tree), we need to move them 
+                    # FROM the added_diff TO the moved_from_diff
+                    moved_from_diff.children = added_diff.children
+                    for child in moved_from_diff.children:
+                        child.parent = moved_from_diff
+
                 else:
                     local_diff = RemovedDiff(record1, parent_diff, [])
                     potentially_removed[record1.hash] = local_diff
+                    
+                    # Expand if it is a tree
+                    if record1.type == TreeRecordType.TREE:
+                         try:
+                            subtree = load_tree1(record1.hash)
+                            _expand_diff(local_diff, subtree)
+                         except Exception:
+                            pass
 
                 parent_diff.children.append(local_diff)
             else:
@@ -169,16 +244,38 @@ def diff_trees(tree1: Tree | None, tree2: Tree | None, *, load_tree1: Callable[[
                     removed_diff = potentially_removed[record2.hash]
                     del potentially_removed[record2.hash]
 
+                    # Found a move!
                     local_diff = MovedFromDiff(record2, parent_diff, [], None)
                     moved_to_diff = MovedToDiff(removed_diff.record, removed_diff.parent, [], local_diff)
                     local_diff.moved_from = moved_to_diff
 
-                    removed_diff.parent.children = (
-                        [_ if _.record.hash != record2.hash else moved_to_diff for _ in removed_diff.parent.children]
-                    )
+                    # Fix up the removed_diff side
+                    removed_parent = removed_diff.parent
+                    new_children = []
+                    for child in removed_parent.children:
+                        if child is removed_diff:
+                            new_children.append(moved_to_diff)
+                        else:
+                            new_children.append(child)
+                    removed_parent.children = new_children
+
+                    _promote_parents_to_modified(moved_to_diff)
+
+                    moved_to_diff.children = removed_diff.children
+                    for child in moved_to_diff.children:
+                        child.parent = moved_to_diff
+
                 else:
                     local_diff = AddedDiff(record2, parent_diff, [])
                     potentially_added[record2.hash] = local_diff
+
+                    # Expand if it is a tree
+                    if record2.type == TreeRecordType.TREE:
+                         try:
+                            subtree = load_tree2(record2.hash)
+                            _expand_diff(local_diff, subtree)
+                         except Exception:
+                            pass
 
                 parent_diff.children.append(local_diff)
 
