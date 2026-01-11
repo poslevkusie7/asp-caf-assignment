@@ -42,7 +42,7 @@ def test_log_repo_error(temp_repo: Repository, capsys: CaptureFixture[str]) -> N
     (working_dir / DEFAULT_REPO_DIR / HEAD_FILE).unlink()
     assert cli_commands.log(working_dir_path=working_dir) == -1
 
-    assert 'Repository error' in capsys.readouterr().err
+    assert 'No repository found' in capsys.readouterr().err
 
 
 def test_log_no_commits(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:

@@ -69,15 +69,14 @@ class Repository:
         tags_dir = self.tags_dir()
         tags_dir.mkdir(parents=True)
 
-        self.add_branch(default_branch)
-
         write_ref(self.head_file(), branch_ref(default_branch))
+        
 
     def exists(self) -> bool:
         """Check if the repository exists in the working directory.
 
         :return: True if the repository exists, False otherwise."""
-        return self.repo_path().exists()
+        return self.repo_path().exists() and self.head_file().exists()
 
     def repo_path(self) -> Path:
         """Get the path to the repository directory.
@@ -149,10 +148,10 @@ class Repository:
         :raises RepositoryError: If the HEAD ref file does not exist.
         :raises RepositoryNotFoundError: If the repository does not exist."""
         # If HEAD is a symbolic reference, resolve it to a hash
-        resolved_ref = self.resolve_ref(self.head_ref())
-        if resolved_ref:
-            return resolved_ref
-        return None
+        try:
+            return self.resolve_ref(self.head_ref())
+        except RefError:
+            return None
 
     @requires_repo
     def refs(self) -> list[SymRef]:
@@ -322,7 +321,7 @@ class Repository:
 
         :param branch: The name of the branch to add.
         :raises ValueError: If the branch name is empty.
-        :raises RepositoryError: If the branch already exists.
+        :raises RepositoryError: If the branch already exists or co commits in repository.
         :raises RepositoryNotFoundError: If the repository does not exist."""
         if not branch:
             msg = 'Branch name is required'
@@ -330,8 +329,14 @@ class Repository:
         if self.branch_exists(SymRef(branch)):
             msg = f'Branch "{branch}" already exists'
             raise RepositoryError(msg)
-
-        (self.heads_dir() / branch).touch()
+        
+        head_commit = self.head_commit()
+        if head_commit is None:
+            msg = f'Cannot create branch "{branch}": Repository has no commits (HEAD is invalid).'
+            raise RepositoryError(msg)
+        
+        branch_path = self.heads_dir() / branch
+        write_ref(branch_path, head_commit)
 
     @requires_repo
     def delete_branch(self, branch: str) -> None:
@@ -449,10 +454,11 @@ class Repository:
         save_commit(self.objects_dir(), commit)
 
         if branch:
-            self.update_ref(branch, commit_ref)
-
+            write_ref(self.refs_dir() / str(branch), commit_ref)
+        elif isinstance(head_ref, HashRef):
+            write_ref(self.head_file(), commit_ref)
         return commit_ref
-
+    
     @requires_repo
     def commit_working_dir(self, author: str, message: str) -> HashRef:
         """Commit the current working directory to the repository (Legacy).
@@ -493,7 +499,11 @@ class Repository:
         :return: A generator yielding LogEntry objects representing the commits in the log.
         :raises RepositoryError: If a commit cannot be loaded.
         :raises RepositoryNotFoundError: If the repository does not exist."""
-        tip = tip or self.head_ref()
+        if tip is None:
+            if self.head_commit() is None:
+                return
+            tip = self.head_ref()
+        # tip = tip or self.head_ref()
         current_hash = self.resolve_ref(tip)
 
         try:
@@ -633,22 +643,25 @@ class Repository:
             raise RepositoryError(msg)
         
         head_commit = self.head_commit()
-        if head_commit is not None:
-            status = self.diff(head_commit, self.working_dir)
-            if status:
-                raise CheckoutError("Working directory has changes; aborting checkout.")
-            
-            diffs = self.diff(head_commit, resolved_hash)
-            apply_checkout(self.objects_dir(), diffs, self.working_dir)
-        else:
-            for item in self.working_dir.iterdir():
-                if item.name == self.repo_dir.name:
-                    continue
-                raise CheckoutError("Working directory is not empty; aborting checkout.")
-            
-            commit = load_commit(self.objects_dir(), resolved_hash)
-            create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
-
+        try:
+            if head_commit is not None:
+                status = self.diff(head_commit, self.working_dir)
+                if status:
+                    raise CheckoutError("Working directory has changes; aborting checkout.")
+                
+                diffs = self.diff(head_commit, resolved_hash)
+                apply_checkout(self.objects_dir(), diffs, self.working_dir)
+            else:
+                if any(item.name != self.repo_dir.name for item in self.working_dir.iterdir()):
+                    raise CheckoutError("Working directory is not empty; aborting checkout.")
+                
+                commit = load_commit(self.objects_dir(), resolved_hash)
+                create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
+                
+        except(RuntimeError, OSError) as e:
+            msg = f"Could not load commit for reference '{target}': {e}"
+            raise RepositoryError(msg) from e
+        
         if isinstance(target, SymRef) and str(target).startswith(f"{HEADS_DIR}/"):
             write_ref(self.head_file(), target)
         else:

@@ -8,6 +8,10 @@ from caf import cli_commands
 
 
 def test_add_branch_command(temp_repo: Repository) -> None:
+    (temp_repo.working_dir / 'a').touch()
+    temp_repo.commit_working_dir('Tester', 'Initial')
+    
+    
     assert cli_commands.add_branch(working_dir_path=temp_repo.working_dir, branch_name='feature') == 0
 
     branch_path = temp_repo.working_dir / DEFAULT_REPO_DIR / REFS_DIR / HEADS_DIR / 'feature'
@@ -20,6 +24,9 @@ def test_add_branch_missing_name(temp_repo: Repository, capsys: CaptureFixture[s
 
 
 def test_add_branch_twice(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
+    (temp_repo.working_dir / 'a').touch()
+    temp_repo.commit_working_dir('Tester', 'Initial')
+    
     assert cli_commands.add_branch(working_dir_path=temp_repo.working_dir, branch_name='feature') == 0
     assert cli_commands.add_branch(working_dir_path=temp_repo.working_dir, branch_name='feature') == -1
 

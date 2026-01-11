@@ -7,6 +7,9 @@ from caf import cli_commands
 
 
 def test_branch_exists_command(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
+    (temp_repo.working_dir / 'a').touch()
+    temp_repo.commit_working_dir('Tester', 'Initial')
+    
     assert cli_commands.add_branch(working_dir_path=temp_repo.working_dir, branch_name='feature') == 0
     assert cli_commands.branch_exists(working_dir_path=temp_repo.working_dir, branch_name='feature') == 0
 
@@ -25,5 +28,8 @@ def test_branch_exists_empty(temp_repo: Repository, capsys: CaptureFixture[str])
 
 
 def test_branch_exists_does_not_exist(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
+    (temp_repo.working_dir / 'a').touch()
+    temp_repo.commit_working_dir('Tester', 'Initial')
+    
     assert cli_commands.branch_exists(working_dir_path=temp_repo.working_dir, branch_name='branch') == -1
     assert 'Branch "branch" does not exist' in capsys.readouterr().err

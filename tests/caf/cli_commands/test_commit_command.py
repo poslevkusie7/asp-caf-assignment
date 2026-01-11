@@ -40,8 +40,7 @@ def test_commit_repo_error(temp_repo: Repository, capsys: CaptureFixture[str]) -
                                author='Test Author',
                                message='Test commit message') == -1
 
-    assert 'Repository error' in capsys.readouterr().err
-
+    assert 'No repository found' in capsys.readouterr().err
 
 def test_commit_missing_author(temp_repo: Repository, capsys: CaptureFixture[str]) -> None:
     temp_file = temp_repo.working_dir / 'test_file.txt'
