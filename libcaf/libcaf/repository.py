@@ -764,12 +764,7 @@ class Repository:
 
         final_candidates = set(common_ancestors)
         
-        sorted_common = sorted(list(common_ancestors)) # Sort for deterministic behavior if needed
-        
-        for candidate in list(final_candidates):
-
-            pass
-            
+        sorted_common = sorted(list(common_ancestors)) # Sort for deterministic behavior if needed        
         
         def is_ancestor(ancestor: str, descendant: str) -> bool:
             if ancestor == descendant:
