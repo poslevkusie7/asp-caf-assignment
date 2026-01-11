@@ -761,64 +761,15 @@ class Repository:
         if not common_ancestors:
             return None
             
-        # Refine to find the "best" common ancestor (LCA)
-        # A common ancestor is "better" if it is a descendant of another common ancestor.
-        # We want the one that is not an ancestor of any OTHER common ancestor.
-        # Actually, simpler: The LCA is the one in common_ancestors that has no children in common_ancestors?
-        # No, "children" implies we have child pointers (we don't).
-        # We only have parent pointers.
-        # So we want a node in common_ancestors such that it is NOT a parent (ancestor) of any other node in common_ancestors.
-        
-        # We can re-use the graph traversal or just check reachability.
-        # Since we already have full ancestor sets, we can check efficiently.
-        
-        # If A is an ancestor of B, then A is in get_ancestors(B).
-        # We want C in common_ancestors such that for all OTHER X in common_ancestors, C is NOT an ancestor of X.
-        
-        # Optimization: We can compute the "reachable from" for the common ancestors.
-        # But brute force for small histories might be fine:
-        # candidates = common_ancestors.copy()
-        # for a in common_ancestors:
-        #   for b in common_ancestors:
-        #       if a != b and a is ancestor of b:
-        #           candidates.remove(a)
-        
-        # To do "is ancestor of" efficiently here, we can use the sets we built?
-        # No, ancestors1 only tells us ancestors of the tips.
-        # We might need to check ancestry between two arbitrary common ancestors.
-        
-        # Let's try to order them by generation/distance? No, distance can vary.
-        # Let's implement the set reduction.
-        
+
         final_candidates = set(common_ancestors)
         
         sorted_common = sorted(list(common_ancestors)) # Sort for deterministic behavior if needed
         
-        # Pre-compute ancestors for all common ancestors? potentially expensive.
-        # For now, let's just pick one that seems best, or if we assume strict tree (no criss-cross),
-        # the first one we see in a parallel BFS might work?
-        # The prompt just says "common base detection". Git merge-base usually returns the "best" one.
-        
-        # Let's try a standard approach:
-        # "Best" means there is no path from the candidate to any other candidate in the set.
-        # i.e. it is topologically "highest" (closest to tips).
-        
         for candidate in list(final_candidates):
-            # Check if 'candidate' is an ancestor of any other 'other' in final_candidates
-            # If yes, 'candidate' is strictly worse than 'other', so remove 'candidate'.
-            
-            # To check if A is ancestor of B:
-            # We need to traverse parents of B.
-            
-            # Optimization: 
-            # If we rely on timestamps? untrustworthy.
-            
-            # Let's do a mini-BFS for each pair? O(N^2 * D)?
-            
-            # Alternative: When building ancestors1, we could track depth/distance?
+
             pass
             
-        # Given the probably small size of the assignment, let's implement the check.
         
         def is_ancestor(ancestor: str, descendant: str) -> bool:
             if ancestor == descendant:
@@ -833,8 +784,6 @@ class Repository:
                     c = load_commit(self.objects_dir(), HashRef(curr))
                     for p in c.parents:
                         if p not in seen:
-                            # Optimization: If p is not in common_ancestors, and we are looking for relationship 
-                            # strictly WITHIN common_ancestors... wait, paths can go outside.
                             seen.add(p)
                             q.append(p)
                 except:
