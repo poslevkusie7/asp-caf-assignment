@@ -184,6 +184,12 @@ class Repository:
                 if ref.upper() == 'HEAD':
                     return self.resolve_ref(self.head_ref())
 
+                if '/' not in ref:
+                    if self.branch_exists(SymRef(ref)):
+                        return self.resolve_ref(branch_ref(ref))
+                    if self.tag_exists(SymRef(ref)):
+                        return self.resolve_ref(tag_ref(ref))
+
                 try:
                     ref_value = read_ref(self.refs_dir() / ref)
                 except FileNotFoundError as e:
@@ -192,10 +198,12 @@ class Repository:
 
                 return self.resolve_ref(ref_value)
             case str():
-                # Try to figure out what kind of ref it is by looking at the list of refs
-                # in the refs directory
-                if ref.upper() == 'HEAD' or ref in self.refs():
-                    return self.resolve_ref(SymRef(ref))
+                if ref.upper() == 'HEAD':
+                    return self.resolve_ref(self.head_ref())
+                if self.branch_exists(SymRef(ref)):
+                    return self.resolve_ref(branch_ref(ref))
+                if self.tag_exists(SymRef(ref)):
+                    return self.resolve_ref(tag_ref(ref))
                 if len(ref) == HASH_LENGTH and all(c in HASH_CHARSET for c in ref):
                     return HashRef(ref)
 
@@ -328,8 +336,18 @@ class Repository:
         if self.branch_exists(SymRef(branch)):
             msg = f'Branch "{branch}" already exists'
             raise RepositoryError(msg)
-        
-        (self.heads_dir() / branch).touch()
+
+        branch_path = self.heads_dir() / branch
+        target_commit = None
+        if self.head_file().exists():
+            try:
+                target_commit = self.head_commit()
+            except RepositoryError:
+                target_commit = None
+        if target_commit:
+            write_ref(branch_path, target_commit)
+        else:
+            branch_path.touch()
 
     @requires_repo
     def delete_branch(self, branch: str) -> None:
