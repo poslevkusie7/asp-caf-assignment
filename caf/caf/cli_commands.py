@@ -397,9 +397,6 @@ def checkout(**kwargs) -> int:
     except RepositoryNotFoundError:
         _print_error(f'No repository found at {repo.repo_path()}')
         return -1
-    except CheckoutError as e:
-        _print_error(str(e))
-        return -1
-    except (RepositoryError, RefError) as e:
+    except (RepositoryError, RefError, CheckoutError) as e:
         _print_error(f'checkout: {e}')
         return -1
