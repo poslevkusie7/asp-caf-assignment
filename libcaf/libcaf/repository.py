@@ -186,6 +186,12 @@ class Repository:
                 if ref.upper() == 'HEAD':
                     return self.resolve_ref(self.head_ref())
 
+                if '/' not in ref:
+                    if self.branch_exists(SymRef(ref)):
+                        return self.resolve_ref(branch_ref(ref))
+                    if self.tag_exists(SymRef(ref)):
+                        return self.resolve_ref(tag_ref(ref))
+
                 try:
                     ref_value = read_ref(self.refs_dir() / ref)
                 except FileNotFoundError as e:
@@ -194,10 +200,12 @@ class Repository:
 
                 return self.resolve_ref(ref_value)
             case str():
-                # Try to figure out what kind of ref it is by looking at the list of refs
-                # in the refs directory
-                if ref.upper() == 'HEAD' or ref in self.refs():
-                    return self.resolve_ref(SymRef(ref))
+                if ref.upper() == 'HEAD':
+                    return self.resolve_ref(self.head_ref())
+                if self.branch_exists(SymRef(ref)):
+                    return self.resolve_ref(branch_ref(ref))
+                if self.tag_exists(SymRef(ref)):
+                    return self.resolve_ref(tag_ref(ref))
                 if len(ref) == HASH_LENGTH and all(c in HASH_CHARSET for c in ref):
                     return HashRef(ref)
 
@@ -331,7 +339,17 @@ class Repository:
             msg = f'Branch "{branch}" already exists'
             raise RepositoryError(msg)
 
-        (self.heads_dir() / branch).touch()
+        branch_path = self.heads_dir() / branch
+        target_commit = None
+        if self.head_file().exists():
+            try:
+                target_commit = self.head_commit()
+            except RepositoryError:
+                target_commit = None
+        if target_commit:
+            write_ref(branch_path, target_commit)
+        else:
+            branch_path.touch()
 
     @requires_repo
     def delete_branch(self, branch: str) -> None:
@@ -633,22 +651,25 @@ class Repository:
             raise RepositoryError(msg)
         
         head_commit = self.head_commit()
-        if head_commit is not None:
-            status = self.diff(head_commit, self.working_dir)
-            if status:
-                raise CheckoutError("Working directory has changes; aborting checkout.")
-            
-            diffs = self.diff(head_commit, resolved_hash)
-            apply_checkout(self.objects_dir(), diffs, self.working_dir)
-        else:
-            for item in self.working_dir.iterdir():
-                if item.name == self.repo_dir.name:
-                    continue
-                raise CheckoutError("Working directory is not empty; aborting checkout.")
-            
-            commit = load_commit(self.objects_dir(), resolved_hash)
-            create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
-
+        try:
+            if head_commit is not None:
+                status = self.diff(head_commit, self.working_dir)
+                if status:
+                    raise CheckoutError("Working directory has changes; aborting checkout.")
+                
+                diffs = self.diff(head_commit, resolved_hash)
+                apply_checkout(self.objects_dir(), diffs, self.working_dir)
+            else:
+                if any(item.name != self.repo_dir.name for item in self.working_dir.iterdir()):
+                    raise CheckoutError("Working directory is not empty; aborting checkout.")
+                
+                commit = load_commit(self.objects_dir(), resolved_hash)
+                create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
+                
+        except(RuntimeError, OSError) as e:
+            msg = f"Could not load commit for reference '{target}': {e}"
+            raise RepositoryError(msg) from e
+        
         if isinstance(target, SymRef) and str(target).startswith(f"{HEADS_DIR}/"):
             write_ref(self.head_file(), target)
         else:
