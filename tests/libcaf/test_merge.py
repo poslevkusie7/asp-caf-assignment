@@ -2,13 +2,24 @@ from libcaf.repository import Repository
 from libcaf import Commit
 from libcaf.plumbing import save_commit, hash_object
 from libcaf.ref import HashRef
+import libcaf.index
 from datetime import datetime
 
 # Helper to create a commit immediately
 def create_commit(repo: Repository, parents: list[str], message: str) -> str:
-    # Use a dummy tree hash (valid format but pointing to nothing, which is fine for merge_base)
-    dummy_tree = "0" * 40
-    commit = Commit(dummy_tree, "User", message, int(datetime.now().timestamp()), parents)
+    # create a file to ensure different tree hash if needed, or just reusing empty tree is fine
+    # but to be safe and "real", let's update index with a file
+    filename = f"file_{message}.txt"
+    filepath = repo.working_dir / filename
+    filepath.write_text(f"content for {message}")
+    
+    repo.update_index(filepath)
+    
+    # write the tree from index
+    index_data = repo.read_index()
+    tree_hash = libcaf.index.build_tree_from_index(index_data, repo.objects_dir())
+    
+    commit = Commit(tree_hash, "User", message, int(datetime.now().timestamp()), parents)
     save_commit(repo.objects_dir(), commit)
     return hash_object(commit)
 

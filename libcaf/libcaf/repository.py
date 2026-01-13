@@ -733,59 +733,44 @@ class Repository:
         :param commit_hash2: The hash of the second commit.
         :return: The hash of the common ancestor or None if no common ancestor is found.
         """
-        def get_ancestors(commit_hash: str) -> set[str]:
-            ancestors = set()
-            queue = deque([commit_hash])
-            visited = {commit_hash}
-            
-            while queue:
-                current_hash = queue.popleft()
-                ancestors.add(current_hash)
-                
-                try:
-                    commit = load_commit(self.objects_dir(), HashRef(current_hash))
-                    for parent in commit.parents:
-                        if parent not in visited:
-                            visited.add(parent)
-                            queue.append(parent)
-                except Exception:
-                    # Ignore missing commits (detached parts of history maybe?)
-                    continue
-            return ancestors
-
-        ancestors1 = get_ancestors(commit_hash1)
-        ancestors2 = get_ancestors(commit_hash2)
+        # 1. Compute ancestors for commit1
+        ancestors1 = set()
+        queue = deque([commit_hash1])
+        visited = {commit_hash1}
         
+        while queue:
+            current_hash = queue.popleft()
+            ancestors1.add(current_hash)
+            
+            commit = load_commit(self.objects_dir(), HashRef(current_hash))
+            for parent in commit.parents:
+                if parent not in visited:
+                    visited.add(parent)
+                    queue.append(parent)
+
+        # 2. Compute ancestors for commit2
+        ancestors2 = set()
+        queue = deque([commit_hash2])
+        visited = {commit_hash2}
+        
+        while queue:
+            current_hash = queue.popleft()
+            ancestors2.add(current_hash)
+            
+            commit = load_commit(self.objects_dir(), HashRef(current_hash))
+            for parent in commit.parents:
+                if parent not in visited:
+                    visited.add(parent)
+                    queue.append(parent)
+        
+        # 3. Find common ancestors
         common_ancestors = ancestors1.intersection(ancestors2)
         
         if not common_ancestors:
             return None
             
-
-        final_candidates = set(common_ancestors)
-        
-        sorted_common = sorted(list(common_ancestors)) # Sort for deterministic behavior if needed        
-        
-        def is_ancestor(ancestor: str, descendant: str) -> bool:
-            if ancestor == descendant:
-                return True
-            q = deque([descendant])
-            seen = {descendant}
-            while q:
-                curr = q.popleft()
-                if curr == ancestor:
-                    return True
-                try:
-                    c = load_commit(self.objects_dir(), HashRef(curr))
-                    for p in c.parents:
-                        if p not in seen:
-                            seen.add(p)
-                            q.append(p)
-                except:
-                    continue
-            return False
-
-        # We want to keep nodes that are NOT ancestors of any other node in the set.
+        # 4. Filter for LCA (candidates that are not ancestors of any other candidate)
+        # Convert to list for stable iteration order if needed, or just iterate set
         current_candidates = list(common_ancestors)
         best_candidates = []
         
@@ -796,18 +781,38 @@ class Repository:
                 if i == j: 
                     continue
                 cand_j = current_candidates[j]
-                if is_ancestor(cand_i, cand_j):
+                
+                # Check is_ancestor(cand_i, cand_j) inlined
+                # cand_i is ancestor of cand_j?
+                if cand_i == cand_j:
+                    is_ancestor = True
+                else:
+                    is_ancestor = False
+                    q = deque([cand_j])
+                    seen = {cand_j}
+                    while q:
+                        curr = q.popleft()
+                        if curr == cand_i:
+                            # cand_i reachable from cand_j (so cand_i is an ancestor)
+                            is_ancestor = True
+                            break
+                        
+                        # We must propagate errors here if commits are missing
+                        c = load_commit(self.objects_dir(), HashRef(curr))
+                        for p in c.parents:
+                            if p not in seen:
+                                seen.add(p)
+                                q.append(p)
+                
+                if is_ancestor:
                     # cand_i is an ancestor of cand_j, so cand_i is "older" / "worse".
-                    # cand_j is "newer" / "better".
                     is_best = False
                     break
             if is_best:
                 best_candidates.append(cand_i)
                 
-        # If multiple best candidates (e.g. criss-cross merge), return the first one (Git usually does this unless --all)
+        # If multiple best candidates (e.g. criss-cross merge), return the first one
         return best_candidates[0] if best_candidates else None
-
-
 
 def branch_ref(branch: str) -> SymRef:
     """Create a symbolic reference for a branch name.
