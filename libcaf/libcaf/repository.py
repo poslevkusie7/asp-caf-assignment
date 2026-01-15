@@ -738,6 +738,19 @@ class Repository:
         """
         visited = set()
         
+        # Validate inputs first
+        try:
+            load_commit(self.objects_dir(), HashRef(commit_hash1))
+        except Exception as e:
+            msg = f"Commit {commit_hash1} not found or invalid"
+            raise RepositoryError(msg) from e
+            
+        try:
+            load_commit(self.objects_dir(), HashRef(commit_hash2))
+        except Exception as e:
+            msg = f"Commit {commit_hash2} not found or invalid"
+            raise RepositoryError(msg) from e
+        
         # Initialize cursors for both commits
         curr1: str | None = commit_hash1
         curr2: str | None = commit_hash2
