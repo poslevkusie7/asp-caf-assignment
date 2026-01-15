@@ -113,6 +113,9 @@ def normalize_path(path: str | Path, working_dir: Path) -> str:
     """
     # Resolve converts relative paths to absolute and cleans up ".." or symlinks
     path_obj = Path(path)
+    
+    # Ensure working_dir is absolute
+    working_dir = working_dir.resolve()
 
     # FIX: If path is relative, anchor it to the repo's working directory
     if not path_obj.is_absolute():
