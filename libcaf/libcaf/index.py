@@ -115,13 +115,13 @@ def normalize_path(path: str | Path, working_dir: Path) -> str:
     path_obj = Path(path)
     
     # Ensure working_dir is absolute
-    working_dir = working_dir.resolve()
+    working_dir = Path(os.path.abspath(working_dir))
 
     # FIX: If path is relative, anchor it to the repo's working directory
     if not path_obj.is_absolute():
-        file_path = (working_dir / path_obj).resolve()
+        file_path = Path(os.path.abspath(working_dir / path_obj))
     else:
-        file_path = path_obj.resolve()
+        file_path = Path(os.path.abspath(path_obj))
 
     # Make path relative to working directory
     try:

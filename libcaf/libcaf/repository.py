@@ -19,7 +19,7 @@ from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff,
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
 from .checkout import CheckoutError, apply_checkout, create_tree
 from . import index
-from . import merge
+
 
 
 class RepositoryError(Exception):
@@ -734,6 +734,7 @@ class Repository:
         :param commit_hash2: The hash of the second commit.
         :return: The hash of the common ancestor or None if no common ancestor is found.
         """
+        from . import merge
         # Validate inputs first (Wrapper logic)
         try:
             load_commit(self.objects_dir(), HashRef(commit_hash1))
