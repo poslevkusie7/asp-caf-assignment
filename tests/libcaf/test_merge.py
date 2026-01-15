@@ -5,6 +5,8 @@ from libcaf.ref import HashRef
 import libcaf.index
 from datetime import datetime
 
+from caf.cli_commands import add as cli_add
+
 # Helper to create a commit immediately
 def create_commit(repo: Repository, parents: list[str], message: str) -> str:
     # create a file to ensure different tree hash if needed, or just reusing empty tree is fine
@@ -13,7 +15,9 @@ def create_commit(repo: Repository, parents: list[str], message: str) -> str:
     filepath = repo.working_dir / filename
     filepath.write_text(f"content for {message}")
     
-    repo.update_index(filepath)
+    # Use the high-level CLI command "add"
+    # We reconstruct the CLI arguments that would have created this repo context
+    cli_add(files=[str(filepath)], working_dir_path=str(repo.working_dir), repo_dir=str(repo.repo_dir))
     
     # write the tree from index
     index_data = repo.read_index()
