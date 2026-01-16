@@ -25,7 +25,6 @@ def _get_changes(base_lines: list[str], text_lines: list[str], origin: str) -> l
 def _apply_changes_to_base_substring(base_lines: list[str], start: int, end: int, changes_subset: list[_Change]) -> list[str]:
     res = []
     curr = start
-    changes_subset.sort(key=lambda c: c.start)
     for c in changes_subset:
         if c.start > curr:
             res.extend(base_lines[curr:c.start])
