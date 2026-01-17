@@ -1,118 +1,108 @@
 """Merge functionality for libcaf."""
 
-import difflib
-from dataclasses import dataclass
+import mmap
+import os
+import merge3
+from contextlib import ExitStack
+from collections.abc import Sequence, Iterator
+from pathlib import Path
+from typing import overload
 
 from .plumbing import load_commit
 from .ref import HashRef
-from .constants import OBJECTS_SUBDIR
 
-@dataclass
-class _Change:
-    start: int
-    end: int
-    lines: list[str]
-    origin: str
+class FileLineSequence(Sequence[str]):
+    """A lazy sequence of lines from a file on disk using mmap."""
+    def __init__(self, path: Path):
+        self.path = path
+        self._offsets: list[int] = [0]
+        self._len = 0
+        self._file = None
+        self._mm = None
 
-def _get_changes(base_lines: list[str], text_lines: list[str], origin: str) -> list[_Change]:
-    matcher = difflib.SequenceMatcher(None, base_lines, text_lines)
-    changes = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag != 'equal':
-            changes.append(_Change(i1, i2, text_lines[j1:j2], origin))
-    return changes
-
-def _apply_changes_to_base_substring(base_lines: list[str], start: int, end: int, changes_subset: list[_Change]) -> list[str]:
-    res = []
-    curr = start
-    for c in changes_subset:
-        if c.start > curr:
-            res.extend(base_lines[curr:c.start])
-        res.extend(c.lines)
-        curr = c.end
-    if curr < end:
-        res.extend(base_lines[curr:end])
-    return res
-
-def merge_content(base: str, source: str, other: str) -> str:
-    """Merge content from three sources (3-way merge).
-    
-    :param base: The common ancestor content.
-    :param source: The source content (e.g., HEAD).
-    :param other: The other content (e.g., merging branch).
-    :return: The merged content with conflict markers.
-    """
-    base_lines = base.splitlines(keepends=True)
-    source_lines = source.splitlines(keepends=True)
-    other_lines = other.splitlines(keepends=True)
-
-    changes_source = _get_changes(base_lines, source_lines, 'source')
-    changes_other = _get_changes(base_lines, other_lines, 'other')
-    
-    all_changes = sorted(changes_source + changes_other, key=lambda c: c.start)
-    
-    output = []
-    base_idx = 0
-    change_idx = 0
-    
-    while change_idx < len(all_changes):
-        change = all_changes[change_idx]
+        # Determine file size
+        file_size = self.path.stat().st_size
         
-        if change.start > base_idx:
-            output.extend(base_lines[base_idx:change.start])
-            base_idx = change.start
-        
-        cluster = [change]
-        change_idx += 1
-        
-        cluster_start = change.start
-        cluster_end = change.end
-        
-        while change_idx < len(all_changes):
-            next_change = all_changes[change_idx]
+        if file_size > 0:
+            self._file = self.path.open('rb')
+            self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
             
-            is_overlap = False
-            if next_change.start < cluster_end:
-                is_overlap = True
-            elif next_change.start == cluster_end:
-                if next_change.end == next_change.start:
-                     is_overlap = True
-                else: 
-                     is_overlap = False
-            
-            if is_overlap:
-                cluster.append(next_change)
-                cluster_end = max(cluster_end, next_change.end)
-                change_idx += 1
-            else:
-                break
-
-        cluster_source = [c for c in cluster if c.origin == 'source']
-        cluster_other = [c for c in cluster if c.origin == 'other']
-        
-        res_source = _apply_changes_to_base_substring(base_lines, cluster_start, cluster_end, cluster_source)
-        res_other = _apply_changes_to_base_substring(base_lines, cluster_start, cluster_end, cluster_other)
-        
-        if not cluster_source:
-             output.extend(res_other)
-        elif not cluster_other:
-             output.extend(res_source)
+            # Fast scan for newlines
+            last_pos = 0
+            while True:
+                pos = self._mm.find(b'\n', last_pos)
+                if pos == -1:
+                    if last_pos < file_size:
+                         # Last line without newline
+                         self._len += 1
+                         self._offsets.append(file_size)
+                    break
+                
+                self._len += 1
+                self._offsets.append(pos + 1)
+                last_pos = pos + 1
         else:
-             if res_source == res_other:
-                 output.extend(res_source)
-             else:
-                 output.append("<<<<<<< source\n")
-                 output.extend(res_source)
-                 output.append("=======\n")
-                 output.extend(res_other)
-                 output.append(">>>>>>> other\n")
-            
-        base_idx = cluster_end
+            # Handle empty file
+             pass
 
-    if base_idx < len(base_lines):
-        output.extend(base_lines[base_idx:])
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._mm:
+            self._mm.close()
+        if self._file:
+            self._file.close()
+
+    def __len__(self) -> int:
+        return self._len
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+    
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+             start, stop, step = index.indices(len(self))
+             if step != 1: 
+                 raise NotImplementedError("Slicing with step != 1 not supported")
+             return [self[i] for i in range(start, stop)]
         
-    return "".join(output)
+        if index < 0:
+            index += len(self)
+        
+        if index < 0 or index >= len(self):
+            raise IndexError("Index out of range")
+        
+        # If empty file, len is 0, so we won't get here unless index error
+            
+        start_offset = self._offsets[index]
+        end_offset = self._offsets[index+1]
+        
+        if self._mm:
+            line_bytes = self._mm[start_offset:end_offset]
+            return line_bytes.decode('utf-8', errors='replace')
+        return ""
+
+def merge_content(base: Path, source: Path, other: Path, labels: tuple[str, str] = ('source', 'other')) -> Iterator[str]:
+    """Merge content from three file paths (3-way merge).
+    
+    :param base: Path to the common ancestor file.
+    :param source: Path to the source file (e.g., HEAD).
+    :param other: Path to the other file (e.g., merging branch).
+    :param labels: Tuple of (source_label, other_label) for conflict markers.
+    :return: An iterator yielding the merged content line by line.
+    """
+    with ExitStack() as stack:
+        seq_base = stack.enter_context(FileLineSequence(base))
+        seq_source = stack.enter_context(FileLineSequence(source))
+        seq_other = stack.enter_context(FileLineSequence(other))
+
+        m = merge3.Merge3(seq_base, seq_source, seq_other)
+        yield from m.merge_lines(name_a=labels[0], name_b=labels[1])
+
 
 def merge_base(repo_objects_dir, commit_hash1: str, commit_hash2: str) -> str | None:
     """Find the common ancestor of two commits using simultaneous traversal.

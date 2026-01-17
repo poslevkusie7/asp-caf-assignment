@@ -3,7 +3,7 @@
 import os
 import shutil
 from collections import deque
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps, partial
@@ -19,6 +19,7 @@ from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff,
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
 from .checkout import CheckoutError, apply_checkout, create_tree
 from . import index
+from . import merge
 
 
 
@@ -734,7 +735,6 @@ class Repository:
         :param commit_hash2: The hash of the second commit.
         :return: The hash of the common ancestor or None if no common ancestor is found.
         """
-        from . import merge
         # Validate inputs first (Wrapper logic)
         try:
             load_commit(self.objects_dir(), HashRef(commit_hash1))
@@ -750,6 +750,20 @@ class Repository:
 
         # Delegated to the merge module (Pure logic)
         return merge.merge_base(self.objects_dir(), commit_hash1, commit_hash2)
+
+    @requires_repo
+    def merge_content(self, base: Path, source: Path, other: Path, labels: tuple[str, str] = ('source', 'other')) -> Iterator[str]:
+        """Merge content from three file paths (3-way merge).
+
+        :param base: Path to the common ancestor file.
+        :param source: Path to the source file.
+        :param other: Path to the other file.
+        :param labels: Tuple of (source_label, other_label) for conflict markers.
+        :return: An iterator yielding the merged content line by line.
+        """
+        # this code assume Path type, input correction to be validate in the future (cli layer)
+
+        return merge.merge_content(base, source, other, labels)
 
 
 def branch_ref(branch: str) -> SymRef:

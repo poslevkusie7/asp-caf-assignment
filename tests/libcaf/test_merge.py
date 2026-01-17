@@ -4,6 +4,7 @@ from libcaf.plumbing import save_commit, hash_object
 from libcaf.ref import HashRef
 import libcaf.index
 from datetime import datetime
+from libcaf.merge import merge_content
 
 # Helper to create a commit immediately
 def create_commit(repo: Repository, parents: list[str], message: str) -> str:
@@ -65,3 +66,94 @@ def test_merge_base_diamond(temp_repo: Repository) -> None:
     
     # merge_base(D, B) should be B
     assert temp_repo.merge_base(hash_d, hash_b) == hash_b
+
+def merge_content_helper(base_content: str, source_content: str, other_content: str, tmp_path) -> str:
+    base = tmp_path / "base"
+    source = tmp_path / "source"
+    other = tmp_path / "other"
+    base.write_text(base_content)
+    source.write_text(source_content)
+    other.write_text(other_content)
+    return "".join(merge_content(base, source, other))
+
+def test_merge_content_no_changes(tmp_path):
+    base = "line1\nline2\n"
+    assert merge_content_helper(base, base, base, tmp_path) == base
+
+def test_merge_content_source_changes(tmp_path):
+    base = "line1\nline2\n"
+    source = "line1\nline2 modified\n"
+    other = base
+    assert merge_content_helper(base, source, other, tmp_path) == source
+
+def test_merge_content_other_changes(tmp_path):
+    base = "line1\nline2\n"
+    source = base
+    other = "line1\nline2 modified\n"
+    assert merge_content_helper(base, source, other, tmp_path) == other
+
+def test_merge_content_both_change_distinct_lines(tmp_path):
+    base = "line1\nline2\nline3\n"
+    source = "line1 modified\nline2\nline3\n"
+    other = "line1\nline2\nline3 modified\n"
+    expected = "line1 modified\nline2\nline3 modified\n"
+    assert merge_content_helper(base, source, other, tmp_path) == expected
+
+def test_merge_content_both_change_same_content(tmp_path):
+    base = "line1\n"
+    source = "line1 modified\n"
+    other = "line1 modified\n"
+    assert merge_content_helper(base, source, other, tmp_path) == source
+
+def test_merge_content_conflict(tmp_path):
+    base = "line1\n"
+    source = "line1 source\n"
+    other = "line1 other\n"
+    expected = "<<<<<<< source\nline1 source\n=======\nline1 other\n>>>>>>> other\n"
+    assert merge_content_helper(base, source, other, tmp_path) == expected
+
+def test_merge_content_conflict_middle(tmp_path):
+    base = "line1\nline2\nline3\n"
+    source = "line1\nline2 source\nline3\n"
+    other = "line1\nline2 other\nline3\n"
+    expected = "line1\n<<<<<<< source\nline2 source\n=======\nline2 other\n>>>>>>> other\nline3\n"
+    assert merge_content_helper(base, source, other, tmp_path) == expected
+
+def test_merge_content_insertion_conflict(tmp_path):
+    base = "line1\nline2\n"
+    source = "line1\ninserted source\nline2\n"
+    other = "line1\ninserted other\nline2\n"
+    # Both inserting between line1 and line2
+    expected = "line1\n<<<<<<< source\ninserted source\n=======\ninserted other\n>>>>>>> other\nline2\n"
+    assert merge_content_helper(base, source, other, tmp_path) == expected
+
+
+def test_merge_content_large_file(tmp_path):
+    # Create a large file (> 2 pages, assuming 4KB pages, so > 8KB)
+    # 10,000 lines of "line X\n" will be roughly 70-80KB
+    num_lines = 10000
+    base_content = "".join([f"line {i}\n" for i in range(num_lines)])
+    
+    # Introduce a change at end and beginning
+    source_content = base_content.replace("line 0\n", "line 0 modified\n")
+    other_content = base_content.replace(f"line {num_lines-1}\n", f"line {num_lines-1} modified\n")
+    
+    # Expected result should have both changes (no conflict)
+    expected_content = source_content.replace(f"line {num_lines-1}\n", f"line {num_lines-1} modified\n")
+    
+    merged = merge_content_helper(base_content, source_content, other_content, tmp_path)
+    assert merged == expected_content
+
+def test_merge_content_empty_files(tmp_path):
+    # Case 1: All empty
+    assert merge_content_helper("", "", "", tmp_path) == ""
+    
+    # Case 2: Source adds content
+    assert merge_content_helper("", "content\n", "", tmp_path) == "content\n"
+    
+    # Case 3: Other adds content
+    assert merge_content_helper("", "", "content\n", tmp_path) == "content\n"
+    
+    # Case 4: Base has content, both deleted it
+    assert merge_content_helper("content\n", "", "", tmp_path) == ""
+
