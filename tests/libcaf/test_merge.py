@@ -4,7 +4,7 @@ from libcaf.plumbing import save_commit, hash_object
 from libcaf.ref import HashRef
 import libcaf.index
 from datetime import datetime
-from libcaf.merge import merge_content
+from libcaf.merge import merge_content, FileLineSequence
 
 # Helper to create a commit immediately
 def create_commit(repo: Repository, parents: list[str], message: str) -> str:
@@ -156,4 +156,71 @@ def test_merge_content_empty_files(tmp_path):
     
     # Case 4: Base has content, both deleted it
     assert merge_content_helper("content\n", "", "", tmp_path) == ""
+
+
+def test_file_line_sequence_basic(tmp_path):
+    f = tmp_path / "test_seq.txt"
+    f.write_text("line1\nline2\nline3")
+    
+    with FileLineSequence(f) as seq:
+        assert len(seq) == 3
+        # Direct access
+        assert seq[0] == "line1\n"
+        assert seq[1] == "line2\n"
+        assert seq[2] == "line3"
+        # Negative indexing
+        assert seq[-1] == "line3"
+        assert seq[-2] == "line2\n"
+
+
+
+def test_file_line_sequence_context_manager(tmp_path):
+    f = tmp_path / "ctx.txt"
+    f.write_text("foo\n")
+    
+    seq = FileLineSequence(f)
+    # Access without context manager should raise because mmap is not open
+    try:
+
+        with seq as s:
+            assert s is seq
+            assert s[0] == "foo\n"
+    finally:
+        # Ensure it is closed if test fails inside block
+        pass
+    
+    # After exit, access should fail
+    import pytest
+    with pytest.raises(ValueError): # mmap closed
+        _ = seq[0]
+
+def test_file_line_sequence_lazy_slicing(tmp_path):
+    f = tmp_path / "lazy_slice.txt"
+    # Write enough content so we can distinguish partial vs full scan
+    lines = [f"line{i}\n" for i in range(10)]
+    f.write_text("".join(lines))
+    
+    with FileLineSequence(f) as seq:
+        # 1. Init should not scan
+        assert seq._is_fully_scanned is False
+        assert len(seq._offsets) <= 2 # 0 and maybe 1 depending on impl details, but definitely not 11
+        
+        # 2. Slice [0:2] should only scan up to 2
+        slice_res = seq[0:2]
+        assert slice_res == ["line0\n", "line1\n"]
+        assert seq._is_fully_scanned is False
+        assert len(seq._offsets) >= 3 # 0, len(l0), len(l0+l1)
+# Verify lazy loading: Ensure we didn't scan too far ahead.
+    # We allow < 11 to account for internal chunk reading buffer.
+        assert len(seq._offsets) < 11
+        
+        # 3. Accessing beyond should trigger more scanning
+        _ = seq[5]
+        assert len(seq._offsets) >= 6
+        assert seq._is_fully_scanned is False
+        
+        # 4. Full slice should scan all
+        _ = seq[:]
+        assert seq._is_fully_scanned is True
+        assert len(seq) == 10
 

@@ -751,19 +751,7 @@ class Repository:
         # Delegated to the merge module (Pure logic)
         return merge.merge_base(self.objects_dir(), commit_hash1, commit_hash2)
 
-    @requires_repo
-    def merge_content(self, base: Path, source: Path, other: Path, labels: tuple[str, str] = ('source', 'other')) -> Iterator[str]:
-        """Merge content from three file paths (3-way merge).
 
-        :param base: Path to the common ancestor file.
-        :param source: Path to the source file.
-        :param other: Path to the other file.
-        :param labels: Tuple of (source_label, other_label) for conflict markers.
-        :return: An iterator yielding the merged content line by line.
-        """
-        # this code assume Path type, input correction to be validate in the future (cli layer)
-
-        return merge.merge_content(base, source, other, labels)
 
 
 def branch_ref(branch: str) -> SymRef:

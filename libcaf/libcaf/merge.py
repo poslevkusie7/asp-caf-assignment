@@ -19,31 +19,53 @@ class FileLineSequence(Sequence[str]):
         self._len = 0
         self._file = None
         self._mm = None
+        self._scanned_up_to = 0
+        self._is_fully_scanned = False
+        self._file_size = -1
 
-        # Determine file size
-        file_size = self.path.stat().st_size
-        
-        if file_size > 0:
+    def _ensure_open(self):
+        """Open file and mmap if not already open."""
+        if self._file is None:
+            if not self.path.exists():
+                self._file_size = 0
+                self._is_fully_scanned = True
+                return
+
+            self._file_size = self.path.stat().st_size
+            if self._file_size == 0:
+                self._is_fully_scanned = True
+                return
+
             self._file = self.path.open('rb')
             self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+
+    def _scan_until(self, target_index: int):
+        """Scan file until we find the target line index or EOF."""
+        self._ensure_open()
+        
+        if self._is_fully_scanned or not self._mm:
+            return
+
+        # Target index 10 means we need 11 offsets (0..10)
+        # If target is -1 (infinity), loop until break
+        
+        while not self._is_fully_scanned:
+            if target_index != -1 and len(self._offsets) > target_index + 1:
+                return
+
+            pos = self._mm.find(b'\n', self._scanned_up_to)
+            if pos == -1:
+                # No more newlines
+                if self._scanned_up_to < self._file_size:
+                    # Last line without newline
+                    self._len += 1
+                    self._offsets.append(self._file_size)
+                self._is_fully_scanned = True
+                break
             
-            # Fast scan for newlines
-            last_pos = 0
-            while True:
-                pos = self._mm.find(b'\n', last_pos)
-                if pos == -1:
-                    if last_pos < file_size:
-                         # Last line without newline
-                         self._len += 1
-                         self._offsets.append(file_size)
-                    break
-                
-                self._len += 1
-                self._offsets.append(pos + 1)
-                last_pos = pos + 1
-        else:
-            # Handle empty file
-             pass
+            self._len += 1
+            self._offsets.append(pos + 1)
+            self._scanned_up_to = pos + 1
 
     def __enter__(self):
         return self
@@ -55,6 +77,7 @@ class FileLineSequence(Sequence[str]):
             self._file.close()
 
     def __len__(self) -> int:
+        self._scan_until(-1) # Force full scan
         return self._len
 
     @overload
@@ -65,22 +88,52 @@ class FileLineSequence(Sequence[str]):
 
     def __getitem__(self, index: int | slice) -> str | list[str]:
         if isinstance(index, slice):
+             # Optimization for simple slices: [start:stop] or [:stop]
+             # Avoid full scan if we only need the beginning.
+             if (index.step is None or index.step == 1) and \
+                (index.stop is not None and index.stop >= 0) and \
+                (index.start is None or index.start >= 0):
+                 
+                 # Scan only as much as needed
+                 self._scan_until(index.stop)
+                 
+                 start = index.start if index.start is not None else 0
+                 stop = index.stop
+                 
+                 # Clamp stop to what we actually found
+                 # current known length is (len(_offsets) - 1)
+                 known_len = len(self._offsets) - 1
+                 if stop > known_len:
+                     stop = known_len
+                     
+                 return [self[i] for i in range(start, stop)]
+
+             # Fallback for complex slices (negative indices, steps, open-ended stops)
+             self._scan_until(-1)
              start, stop, step = index.indices(len(self))
              if step != 1: 
                  raise NotImplementedError("Slicing with step != 1 not supported")
              return [self[i] for i in range(start, stop)]
         
         if index < 0:
+            self._scan_until(-1) # Negative index needs full length
             index += len(self)
         
-        if index < 0 or index >= len(self):
-            raise IndexError("Index out of range")
+        # Ensure we have scanned up to this index
+        self._scan_until(index)
         
-        # If empty file, len is 0, so we won't get here unless index error
-            
+        if self._is_fully_scanned and index >= len(self):
+             raise IndexError("Index out of range")
+        
+        # If we just scanned, we should have offsets logic ready
+        # BUT if index is out of range, _scan_until might have finished early
+        if index >= len(self._offsets) - 1:
+             raise IndexError("Index out of range")
+
         start_offset = self._offsets[index]
         end_offset = self._offsets[index+1]
         
+        # Ensure open for read (should be open due to scan, but for safety)
         if self._mm:
             line_bytes = self._mm[start_offset:end_offset]
             return line_bytes.decode('utf-8', errors='replace')
