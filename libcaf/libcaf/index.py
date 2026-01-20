@@ -262,22 +262,35 @@ def _build_tree_recursive(node: dict[str, str | dict], objects_dir: Path) -> str
 
 
 def _collect_tree_files(tree_hash: str, prefix: str, objects_dir: Path, files: dict[str, str]) -> None:
-    """Recursively collect all files from a tree into a flat dictionary."""
+    """Iteratively collect all files from a directory tree into a flat dictionary.
+    
+    :param tree_hash: The hash of the tree to traverse.
+    :param prefix: The current path prefix.
+    :param objects_dir: Path to objects directory.
+    :param files: Dictionary to populate with {path: blob_hash}.
+    """
     if not tree_hash:
         return
+
+    # Stack stores tuples of (tree_hash, path_prefix)
+    stack = [(tree_hash, prefix)]
+
+    while stack:
+        current_hash, current_prefix = stack.pop()
         
-    try:
-        tree = load_tree(objects_dir, tree_hash)
-    except Exception:
-        # If tree is missing or corrupt, we just skip it 
-        return
-        
-    for name, record in tree.records.items():
-        path_str = f"{prefix}/{name}" if prefix else name
-        if record.type == TreeRecordType.BLOB:
-            files[path_str] = record.hash
-        elif record.type == TreeRecordType.TREE:
-            _collect_tree_files(record.hash, path_str, objects_dir, files)
+        try:
+            tree = load_tree(objects_dir, current_hash)
+        except Exception:
+            # If tree is missing or corrupt, we just skip it 
+            continue
+            
+        for name, record in tree.records.items():
+            path_str = f"{current_prefix}/{name}" if current_prefix else name
+            
+            if record.type == TreeRecordType.BLOB:
+                files[path_str] = record.hash
+            elif record.type == TreeRecordType.TREE:
+                stack.append((record.hash, path_str))
 
 
 def build_index_from_tree(tree_hash: str, index_path: Path, objects_dir: Path) -> None:
