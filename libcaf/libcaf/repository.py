@@ -3,7 +3,7 @@
 import os
 import shutil
 from collections import deque
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps, partial
@@ -20,6 +20,7 @@ from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
 from .checkout import CheckoutError, apply_checkout, create_tree
 from . import index
 from . import merge
+
 
 
 class RepositoryError(Exception):
@@ -749,6 +750,8 @@ class Repository:
 
         # Delegated to the merge module (Pure logic)
         return merge.merge_base(self.objects_dir(), commit_hash1, commit_hash2)
+
+
 
 
 def branch_ref(branch: str) -> SymRef:
