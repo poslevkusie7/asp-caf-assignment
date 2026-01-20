@@ -8,8 +8,13 @@ from collections.abc import Sequence, Iterator
 from pathlib import Path
 from typing import overload
 
-from .plumbing import load_commit
+from .plumbing import load_commit, load_tree, save_file_content
+from .checkout import write_blob
 from .ref import HashRef
+from . import TreeRecordType, index
+from dataclasses import dataclass
+import tempfile
+import shutil
 
 class FileLineSequence(Sequence[str]):
     """A lazy sequence of lines from a file on disk using mmap."""
@@ -202,3 +207,153 @@ def merge_base(repo_objects_dir, commit_hash1: str, commit_hash2: str) -> str | 
                 curr2 = None
                 
     return None
+
+def _get_all_files_from_tree(objects_dir: Path, root_tree_hash: str) -> dict[str, str]:
+    """Iteratively collect all files from a directory tree into a dictionary.
+
+    :param objects_dir: Path to objects directory.
+    :param root_tree_hash: The hash of the tree to traverse.
+    :return: A dictionary mapping relative paths to blob hashes.
+    """
+    files: dict[str, str] = {}
+    if not root_tree_hash:
+        return files
+
+    # Stack stores tuples of (tree_hash, path_prefix)
+    stack = [(root_tree_hash, "")]
+
+    while stack:
+        current_hash, prefix = stack.pop()
+        
+        # This will raise exceptions if the tree object is missing or corrupt,
+        # ensuring we don't silently create an empty directory state.
+        tree = load_tree(objects_dir, current_hash)
+        
+        for name, record in tree.records.items():
+            path_str = f"{prefix}/{name}" if prefix else name
+            
+            if record.type == TreeRecordType.BLOB:
+                files[path_str] = record.hash
+            elif record.type == TreeRecordType.TREE:
+                # Push subdirectory to stack
+                stack.append((record.hash, path_str))
+                
+    return files
+
+def merge_commits(
+    objects_dir: Path,
+    working_dir: Path,
+    index_path: Path,
+    head_commit_hash: str,
+    other_commit_hash: str,
+    base_commit_hash: str | None,
+    other_ref_str: str
+) -> None:
+    """Perform a 3-way merge between HEAD, other, and base.
+
+    :param objects_dir: Path to objects directory.
+    :param working_dir: Path to working directory.
+    :param index_path: Path to index file.
+    :param head_commit_hash: Hash of the HEAD commit.
+    :param other_commit_hash: Hash of the other commit.
+    :param base_commit_hash: Hash of the base commit (or None).
+    :param other_ref_str: Name of the other ref for conflict labels.
+    """
+    head_commit = load_commit(objects_dir, HashRef(head_commit_hash))
+    other_commit = load_commit(objects_dir, HashRef(other_commit_hash))
+    base_commit = load_commit(objects_dir, HashRef(base_commit_hash)) if base_commit_hash else None
+    
+    files_head = _get_all_files_from_tree(objects_dir, head_commit.tree_hash)
+    files_other = _get_all_files_from_tree(objects_dir, other_commit.tree_hash)
+    files_base = _get_all_files_from_tree(objects_dir, base_commit.tree_hash) if base_commit else {}
+    
+    all_paths = set(files_head.keys()) | set(files_other.keys()) | set(files_base.keys())
+    
+    @dataclass
+    class MergeAction:
+            type: str 
+            path: Path
+            path_str: str
+            blob_hash: str | None = None
+            
+    actions: list[MergeAction] = []
+    
+    for path_str in all_paths:
+        h_base = files_base.get(path_str)
+        h_head = files_head.get(path_str)
+        h_other = files_other.get(path_str)
+        
+        path = working_dir / path_str
+        
+        if h_head == h_other:
+            continue 
+        
+        if h_head == h_base and h_other != h_base:
+            if h_other is None:
+                # Deleted in other
+                actions.append(MergeAction('DELETE', path, path_str))
+            else:
+                # Added or Modified in other
+                actions.append(MergeAction('UPDATE', path, path_str, h_other))
+        
+        elif h_other == h_base and h_head != h_base:
+            continue
+            
+        else:
+            # Conflict
+            actions.append(MergeAction('CONFLICT', path, path_str, h_other))
+
+    index_data = index.read_index(index_path)
+    
+    for action in actions:
+            if action.type == 'DELETE':
+                if action.path.exists():
+                    if action.path.is_file():
+                        os.remove(action.path)
+                    elif action.path.is_dir():
+                        shutil.rmtree(action.path)
+                
+                # Update in-memory index
+                if action.path_str in index_data:
+                    del index_data[action.path_str]
+                    
+            elif action.type == 'UPDATE':
+                if action.path.exists() and action.path.is_dir():
+                    shutil.rmtree(action.path)
+                write_blob(objects_dir, action.blob_hash, action.path)
+                index_data[action.path_str] = action.blob_hash
+                
+            elif action.type == 'CONFLICT':
+                h_base = files_base.get(action.path_str)
+                h_head = files_head.get(action.path_str)
+                h_other = files_other.get(action.path_str)
+                
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    tmpdir = Path(tmpdirname)
+                    p_base = tmpdir / "base"
+                    p_source = tmpdir / "source" 
+                    p_other = tmpdir / "other"
+                    
+                    if h_base: write_blob(objects_dir, h_base, p_base)
+                    else: p_base.touch()
+                        
+                    if h_head: write_blob(objects_dir, h_head, p_source)
+                    elif action.path.is_file(): 
+                        shutil.copy2(action.path, p_source)
+                    else: p_source.write_text("")
+
+                    if h_other: write_blob(objects_dir, h_other, p_other)
+                    else: p_other.write_text("")
+                        
+                    merged_lines = merge_content(p_base, p_source, p_other, labels=("HEAD", other_ref_str))
+                    
+                    action.path.parent.mkdir(parents=True, exist_ok=True)
+                    if action.path.exists() and action.path.is_dir():
+                        shutil.rmtree(action.path)
+                        
+                    action.path.write_text("".join(merged_lines))
+                    
+                    blob = save_file_content(objects_dir, action.path)
+                    index_data[action.path_str] = blob.hash
+
+    index.write_index(index_path, index_data)

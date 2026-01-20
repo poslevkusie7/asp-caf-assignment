@@ -5,6 +5,7 @@ from _libcaf import hash_length
 DEFAULT_REPO_DIR = '.caf'
 OBJECTS_SUBDIR = 'objects'
 HEAD_FILE = 'HEAD'
+MERGE_HEAD_FILE = 'MERGE_HEAD'
 INDEX_FILE = 'index'
 DEFAULT_BRANCH = 'main'
 REFS_DIR = 'refs'

@@ -218,6 +218,19 @@ def cli() -> None:
             },
             'help': '🔀 Checkout a branch, tag, or commit',
         },
+
+
+        'merge': {
+            'func': cli_commands.merge,
+            'args': {
+                **_repo_args,
+                'commit': {
+                    'type': str,
+                    'help': '🔀 Commit hash or branch to merge',
+                },
+            },
+            'help': '🔀 Merge another branch or commit into HEAD',
+        },
     }
 
     # Register commands
