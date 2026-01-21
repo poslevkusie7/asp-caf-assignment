@@ -351,7 +351,9 @@ def merge_commits(
                     if action.path.exists() and action.path.is_dir():
                         shutil.rmtree(action.path)
                         
-                    action.path.write_text("".join(merged_lines))
+                    with action.path.open('w', encoding='utf-8') as f:
+                        for line in merged_lines:
+                            f.write(line)
                     
                     blob = save_file_content(objects_dir, action.path)
                     index_data[action.path_str] = blob.hash
