@@ -208,37 +208,101 @@ def merge_base(repo_objects_dir, commit_hash1: str, commit_hash2: str) -> str | 
                 
     return None
 
-def _get_all_files_from_tree(objects_dir: Path, root_tree_hash: str) -> dict[str, str]:
-    """Iteratively collect all files from a directory tree into a dictionary.
+@dataclass
+class MergeAction:
+        type: str 
+        path: Path
+        path_str: str
+        blob_hash: str | None = None
+        h_base: str | None = None
+        h_head: str | None = None
 
-    :param objects_dir: Path to objects directory.
-    :param root_tree_hash: The hash of the tree to traverse.
-    :return: A dictionary mapping relative paths to blob hashes.
-    """
-    files: dict[str, str] = {}
-    if not root_tree_hash:
-        return files
-
-    # Stack stores tuples of (tree_hash, path_prefix)
-    stack = [(root_tree_hash, "")]
-
+def _merge_trees(
+    objects_dir: Path,
+    working_dir: Path,
+    base_tree_hash: str | None,
+    head_tree_hash: str | None,
+    other_tree_hash: str | None,
+    current_path: Path = Path(".")
+) -> Iterator[MergeAction]:
+    """Iteratively traverse and merge three trees using a stack."""
+    
+    # Stack stores: (base_hash, head_hash, other_hash, current_relative_path)
+    stack = [(base_tree_hash, head_tree_hash, other_tree_hash, current_path)]
+    
     while stack:
-        current_hash, prefix = stack.pop()
+        b_hash, h_hash, o_hash, cur_path = stack.pop()
         
-        # This will raise exceptions if the tree object is missing or corrupt,
-        # ensuring we don't silently create an empty directory state.
-        tree = load_tree(objects_dir, current_hash)
+        # If all three match, nothing to do
+        if b_hash == h_hash == o_hash:
+            continue
+
+        # If HEAD matches OTHER, they agreed on the state
+        if h_hash == o_hash:
+            continue
+
+        # Load trees (handle None for empty/deleted trees)
+        base_tree = load_tree(objects_dir, b_hash) if b_hash else Tree({})
+        head_tree = load_tree(objects_dir, h_hash) if h_hash else Tree({})
+        other_tree = load_tree(objects_dir, o_hash) if o_hash else Tree({})
+
+        all_names = set(base_tree.records.keys()) | set(head_tree.records.keys()) | set(other_tree.records.keys())
         
-        for name, record in tree.records.items():
-            path_str = f"{prefix}/{name}" if prefix else name
+        # Sort names to ensure deterministic processing order
+        for name in sorted(all_names, reverse=True):
+            base_record = base_tree.records.get(name)
+            head_record = head_tree.records.get(name)
+            other_record = other_tree.records.get(name)
             
-            if record.type == TreeRecordType.BLOB:
-                files[path_str] = record.hash
-            elif record.type == TreeRecordType.TREE:
-                # Push subdirectory to stack
-                stack.append((record.hash, path_str))
+            path = working_dir / cur_path / name
+            path_str = f"{cur_path}/{name}" if cur_path != Path(".") else name
+
+            # Helper to get hash and type safely
+            h_base = base_record.hash if base_record else None
+            h_head = head_record.hash if head_record else None
+            h_other = other_record.hash if other_record else None
+            
+            t_base = base_record.type if base_record else None
+            t_head = head_record.type if head_record else None
+            t_other = other_record.type if other_record else None
+
+            # Check if we are dealing with directories (Trees)
+            types_present = {t for t in [t_base, t_head, t_other] if t is not None}
+            
+            if TreeRecordType.TREE in types_present:
+                 if TreeRecordType.BLOB in types_present:
+
+                     pass 
+            
+            # Exact Tree Match Optimization (Recursion replacement)
+            # We push to stack if ALL present items are Trees.
+            if (t_base == TreeRecordType.TREE or t_base is None) and \
+               (t_head == TreeRecordType.TREE or t_head is None) and \
+               (t_other == TreeRecordType.TREE or t_other is None):
                 
-    return files
+                stack.append((h_base, h_head, h_other, cur_path / name))
+                continue
+                
+            # If we are here, at least one is a BLOB (or we have a Type Conflict)
+            
+            if h_head == h_other:
+                continue
+
+            if h_head == h_base and h_other != h_base:
+                if h_other is None:
+                    # Deleted in other
+                    yield MergeAction('DELETE', path, path_str)
+                else:
+                    # Added or Modified in other
+                    yield MergeAction('UPDATE', path, path_str, h_other)
+
+            elif h_other == h_base and h_head != h_base:
+                continue
+
+            else:
+                # Conflict
+                yield MergeAction('CONFLICT', path, path_str, h_other, h_base=h_base, h_head=h_head)
+
 
 def merge_commits(
     objects_dir: Path,
@@ -263,46 +327,14 @@ def merge_commits(
     other_commit = load_commit(objects_dir, HashRef(other_commit_hash))
     base_commit = load_commit(objects_dir, HashRef(base_commit_hash)) if base_commit_hash else None
     
-    files_head = _get_all_files_from_tree(objects_dir, head_commit.tree_hash)
-    files_other = _get_all_files_from_tree(objects_dir, other_commit.tree_hash)
-    files_base = _get_all_files_from_tree(objects_dir, base_commit.tree_hash) if base_commit else {}
+    actions = list(_merge_trees(
+        objects_dir, 
+        working_dir,
+        base_commit.tree_hash if base_commit else None, 
+        head_commit.tree_hash, 
+        other_commit.tree_hash
+    ))
     
-    all_paths = set(files_head.keys()) | set(files_other.keys()) | set(files_base.keys())
-    
-    @dataclass
-    class MergeAction:
-            type: str 
-            path: Path
-            path_str: str
-            blob_hash: str | None = None
-            
-    actions: list[MergeAction] = []
-    
-    for path_str in all_paths:
-        h_base = files_base.get(path_str)
-        h_head = files_head.get(path_str)
-        h_other = files_other.get(path_str)
-        
-        path = working_dir / path_str
-        
-        if h_head == h_other:
-            continue 
-        
-        if h_head == h_base and h_other != h_base:
-            if h_other is None:
-                # Deleted in other
-                actions.append(MergeAction('DELETE', path, path_str))
-            else:
-                # Added or Modified in other
-                actions.append(MergeAction('UPDATE', path, path_str, h_other))
-        
-        elif h_other == h_base and h_head != h_base:
-            continue
-            
-        else:
-            # Conflict
-            actions.append(MergeAction('CONFLICT', path, path_str, h_other))
-
     index_data = index.read_index(index_path)
     
     for action in actions:
@@ -324,9 +356,10 @@ def merge_commits(
                 index_data[action.path_str] = action.blob_hash
                 
             elif action.type == 'CONFLICT':
-                h_base = files_base.get(action.path_str)
-                h_head = files_head.get(action.path_str)
-                h_other = files_other.get(action.path_str)
+                # No longer looking up from global dicts
+                h_base = action.h_base
+                h_head = action.h_head
+                h_other = action.blob_hash # This is h_other
                 
                 with tempfile.TemporaryDirectory() as tmpdirname:
                     tmpdir = Path(tmpdirname)
