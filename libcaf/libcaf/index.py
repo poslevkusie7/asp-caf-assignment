@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import IO, Iterator
 
 from . import Tree, TreeRecord, TreeRecordType
-from .plumbing import hash_object, save_file_content, save_tree
+from .plumbing import hash_object, save_file_content, save_tree, load_tree
 
 
 @contextlib.contextmanager
@@ -259,3 +259,61 @@ def _build_tree_recursive(node: dict[str, str | dict], objects_dir: Path) -> str
     tree = Tree(tree_records)
     save_tree(objects_dir, tree)
     return hash_object(tree)
+
+
+def _collect_tree_files(tree_hash: str, prefix: str, objects_dir: Path, files: dict[str, str]) -> None:
+    """Iteratively collect all files from a directory tree into a flat dictionary.
+    
+    :param tree_hash: The hash of the tree to traverse.
+    :param prefix: The current path prefix.
+    :param objects_dir: Path to objects directory.
+    :param files: Dictionary to populate with {path: blob_hash}.
+    """
+    if not tree_hash:
+        return
+
+    # Stack stores tuples of (tree_hash, path_prefix)
+    stack = [(tree_hash, prefix)]
+
+    while stack:
+        current_hash, current_prefix = stack.pop()
+        
+        try:
+            tree = load_tree(objects_dir, current_hash)
+        except Exception:
+            # If tree is missing or corrupt, we just skip it 
+            continue
+            
+        for name, record in tree.records.items():
+            path_str = f"{current_prefix}/{name}" if current_prefix else name
+            
+            if record.type == TreeRecordType.BLOB:
+                files[path_str] = record.hash
+            elif record.type == TreeRecordType.TREE:
+                stack.append((record.hash, path_str))
+
+
+def build_index_from_tree(tree_hash: str, index_path: Path, objects_dir: Path) -> None:
+    """Overwrite the index with the contents of a tree.
+    
+    :param tree_hash: The hash of the root tree to load from.
+    :param index_path: Path to the index file to write to.
+    :param objects_dir: Path to objects directory to load trees from.
+    """
+    files: dict[str, str] = {}
+    _collect_tree_files(tree_hash, "", objects_dir, files)
+    
+    with index_lock_file(index_path) as lock_file:
+        for path in sorted(files.keys()):
+            lock_file.write(f"{path} {files[path]}\n")
+
+
+def write_index(index_path: Path, index_data: dict[str, str]) -> None:
+    """Write the entire index dictionary to disk efficiently.
+
+    :param index_path: Path to the index file to write to.
+    :param index_data: Dictionary mapping file paths to blob hashes.
+    """
+    with index_lock_file(index_path) as lock_file:
+        for path in sorted(index_data.keys()):
+            lock_file.write(f"{path} {index_data[path]}\n")

@@ -448,3 +448,25 @@ def checkout(**kwargs) -> int:
     except (RepositoryError, RefError, CheckoutError) as e:
         _print_error(f'checkout: {e}')
         return -1
+
+def merge(**kwargs) -> int:
+    repo = _repo_from_cli_kwargs(kwargs)
+    commit = kwargs.get('commit')
+    
+    if not commit:
+        _print_error("Commit or reference to merge is required.")
+        return -1
+        
+    try:
+        repo.merge(commit)
+        _print_success(f"Merged {commit} into HEAD.")
+        return 0
+    except RepositoryNotFoundError:
+        _print_error(f'No repository found at {repo.repo_path()}')
+        return -1
+    except (RepositoryError, RefError) as e:
+        _print_error(f"Merge error: {e}")
+        return -1
+    except Exception as e:
+         _print_error(f"Unexpected error: {e}")
+         return -1

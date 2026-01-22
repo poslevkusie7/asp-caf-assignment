@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import tempfile
 from collections import deque
 from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass
@@ -13,11 +14,11 @@ from typing import Concatenate
 
 from . import Blob, Commit, Tree, TreeRecord, TreeRecordType
 from .constants import (DEFAULT_BRANCH, DEFAULT_REPO_DIR, HASH_CHARSET, HASH_LENGTH, HEADS_DIR, HEAD_FILE,
-                        INDEX_FILE, OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR)
-from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree
+                        INDEX_FILE, OBJECTS_SUBDIR, REFS_DIR, TAGS_DIR, MERGE_HEAD_FILE)
+from .plumbing import hash_file, hash_object, load_commit, load_tree, save_commit, save_file_content, save_tree, open_content_for_reading
 from .diff import(build_tree_from_fs, diff_trees, AddedDiff, Diff, ModifiedDiff, MovedFromDiff, MovedToDiff, RemovedDiff)
 from .ref import HashRef, Ref, RefError, SymRef, read_ref, write_ref
-from .checkout import CheckoutError, apply_checkout, create_tree
+from .checkout import CheckoutError, apply_checkout, create_tree, write_blob
 from . import index
 from . import merge
 
@@ -470,6 +471,9 @@ class Repository:
 
         if branch:
             self.update_ref(branch, commit_ref)
+        else:
+            # Update HEAD directly if detached
+            write_ref(self.head_file(), commit_ref)
 
         return commit_ref
 
@@ -647,6 +651,13 @@ class Repository:
         :param target: The branch/tag ref or commit hash ref to checkout.
         :raises CheckoutError: If working dir is not clean.
         :raises RepositoryError: If resolving target fails."""
+        # Auto-detect if target string is a branch name
+        if isinstance(target, str) and not isinstance(target, (HashRef, SymRef)):
+            # Check if it matches a local branch
+            branch_path = self.heads_dir() / target
+            if branch_path.exists():
+                target = SymRef(f"{HEADS_DIR}/{target}")
+
         resolved_hash = self.resolve_ref(target)
         if resolved_hash is None:
             msg = f"Cannot resolve reference {target}"
@@ -667,7 +678,11 @@ class Repository:
                 
                 commit = load_commit(self.objects_dir(), resolved_hash)
                 create_tree(self.objects_dir(), commit.tree_hash, self.working_dir)
-                
+            
+            # Update index to match the target commit
+            commit = load_commit(self.objects_dir(), resolved_hash)
+            index.build_index_from_tree(commit.tree_hash, self.index_path(), self.objects_dir())
+
         except(RuntimeError, OSError) as e:
             msg = f"Could not load commit for reference '{target}': {e}"
             raise RepositoryError(msg) from e
@@ -751,6 +766,64 @@ class Repository:
         # Delegated to the merge module (Pure logic)
         return merge.merge_base(self.objects_dir(), commit_hash1, commit_hash2)
 
+    @requires_repo
+    def merge(self, other_ref_str: str) -> None:
+        """Merge another branch or commit into the current HEAD.
+        
+        :param other_ref_str: The reference to merge (branch name, tag, or commit hash).
+        :raises RepositoryError: If the merge fails or working directory is not clean.
+        :raises RefError: If the reference cannot be resolved.
+        """
+        # 1. Safety Check
+        status = self.status()
+        if status:
+             raise RepositoryError("Working directory is not clean. Commit or stash changes before merging.")
+        
+        # 2. Resolve Refs
+        head_commit_hash = self.head_commit()
+        if not head_commit_hash:
+             raise RepositoryError("No HEAD commit to merge into.")
+        
+        other_commit_hash = self.resolve_ref(other_ref_str)
+        if not other_commit_hash:
+             raise RepositoryError(f"Could not resolve reference: {other_ref_str}")
+
+        # 3. Fast-Forward Check
+        base_hash = self.merge_base(head_commit_hash, other_commit_hash)
+        
+        if base_hash == head_commit_hash:
+            head_ref = self.head_ref()
+            self.checkout(other_commit_hash)
+            
+            if isinstance(head_ref, SymRef):
+                # Update the branch pointer
+                self.update_ref(head_ref.ref, HashRef(other_commit_hash))
+                write_ref(self.head_file(), head_ref)
+                print(f"Fast-forward merge: Updated {head_ref.branch_name()} to {other_commit_hash}")
+            else:
+                 print(f"Fast-forward merge: Updated HEAD to {other_commit_hash}")
+            return
+
+        if base_hash == other_commit_hash:
+             print("Already up to date.")
+             return
+
+
+
+        merge.merge_commits(
+            self.objects_dir(),
+            self.working_dir,
+            self.index_path(),
+            head_commit_hash,
+            other_commit_hash,
+            base_hash,
+            other_ref_str
+        )
+
+        # 6. State Management
+        merge_head_path = self.repo_path() / MERGE_HEAD_FILE
+        write_ref(merge_head_path, other_commit_hash)
+
 
 
 
@@ -767,3 +840,5 @@ def tag_ref(tag: str) -> SymRef:
     :param tag: The name of the tag.
     :return: A SymRef object representing the tag reference."""
     return SymRef(f'{TAGS_DIR}/{tag}')
+
+

@@ -8,8 +8,13 @@ from collections.abc import Sequence, Iterator
 from pathlib import Path
 from typing import overload
 
-from .plumbing import load_commit
+from .plumbing import load_commit, load_tree, save_file_content
+from .checkout import write_blob
 from .ref import HashRef
+from . import TreeRecordType, index
+from dataclasses import dataclass
+import tempfile
+import shutil
 
 class FileLineSequence(Sequence[str]):
     """A lazy sequence of lines from a file on disk using mmap."""
@@ -202,3 +207,188 @@ def merge_base(repo_objects_dir, commit_hash1: str, commit_hash2: str) -> str | 
                 curr2 = None
                 
     return None
+
+@dataclass
+class MergeAction:
+        type: str 
+        path: Path
+        path_str: str
+        blob_hash: str | None = None
+        h_base: str | None = None
+        h_head: str | None = None
+
+def _merge_trees(
+    objects_dir: Path,
+    working_dir: Path,
+    base_tree_hash: str | None,
+    head_tree_hash: str | None,
+    other_tree_hash: str | None,
+    current_path: Path = Path(".")
+) -> Iterator[MergeAction]:
+    """Iteratively traverse and merge three trees using a stack."""
+    
+    # Stack stores: (base_hash, head_hash, other_hash, current_relative_path)
+    stack = [(base_tree_hash, head_tree_hash, other_tree_hash, current_path)]
+    
+    while stack:
+        b_hash, h_hash, o_hash, cur_path = stack.pop()
+        
+        # If all three match, nothing to do
+        if b_hash == h_hash == o_hash:
+            continue
+
+        # If HEAD matches OTHER, they agreed on the state
+        if h_hash == o_hash:
+            continue
+
+        # Load trees (handle None for empty/deleted trees)
+        base_tree = load_tree(objects_dir, b_hash) if b_hash else Tree({})
+        head_tree = load_tree(objects_dir, h_hash) if h_hash else Tree({})
+        other_tree = load_tree(objects_dir, o_hash) if o_hash else Tree({})
+
+        all_names = set(base_tree.records.keys()) | set(head_tree.records.keys()) | set(other_tree.records.keys())
+        
+        # Sort names to ensure deterministic processing order
+        for name in sorted(all_names, reverse=True):
+            base_record = base_tree.records.get(name)
+            head_record = head_tree.records.get(name)
+            other_record = other_tree.records.get(name)
+            
+            path = working_dir / cur_path / name
+            path_str = f"{cur_path}/{name}" if cur_path != Path(".") else name
+
+            # Helper to get hash and type safely
+            h_base = base_record.hash if base_record else None
+            h_head = head_record.hash if head_record else None
+            h_other = other_record.hash if other_record else None
+            
+            t_base = base_record.type if base_record else None
+            t_head = head_record.type if head_record else None
+            t_other = other_record.type if other_record else None
+
+            # Check if we are dealing with directories (Trees)
+            types_present = {t for t in [t_base, t_head, t_other] if t is not None}
+            
+            if TreeRecordType.TREE in types_present:
+                 if TreeRecordType.BLOB in types_present:
+
+                     pass 
+            
+            # Exact Tree Match Optimization (Recursion replacement)
+            # We push to stack if ALL present items are Trees.
+            if (t_base == TreeRecordType.TREE or t_base is None) and \
+               (t_head == TreeRecordType.TREE or t_head is None) and \
+               (t_other == TreeRecordType.TREE or t_other is None):
+                
+                stack.append((h_base, h_head, h_other, cur_path / name))
+                continue
+                
+            # If we are here, at least one is a BLOB (or we have a Type Conflict)
+            
+            if h_head == h_other:
+                continue
+
+            if h_head == h_base and h_other != h_base:
+                if h_other is None:
+                    # Deleted in other
+                    yield MergeAction('DELETE', path, path_str)
+                else:
+                    # Added or Modified in other
+                    yield MergeAction('UPDATE', path, path_str, h_other)
+
+            elif h_other == h_base and h_head != h_base:
+                continue
+
+            else:
+                # Conflict
+                yield MergeAction('CONFLICT', path, path_str, h_other, h_base=h_base, h_head=h_head)
+
+
+def merge_commits(
+    objects_dir: Path,
+    working_dir: Path,
+    index_path: Path,
+    head_commit_hash: str,
+    other_commit_hash: str,
+    base_commit_hash: str | None,
+    other_ref_str: str
+) -> None:
+    """Perform a 3-way merge between HEAD, other, and base.
+
+    :param objects_dir: Path to objects directory.
+    :param working_dir: Path to working directory.
+    :param index_path: Path to index file.
+    :param head_commit_hash: Hash of the HEAD commit.
+    :param other_commit_hash: Hash of the other commit.
+    :param base_commit_hash: Hash of the base commit (or None).
+    :param other_ref_str: Name of the other ref for conflict labels.
+    """
+    head_commit = load_commit(objects_dir, HashRef(head_commit_hash))
+    other_commit = load_commit(objects_dir, HashRef(other_commit_hash))
+    base_commit = load_commit(objects_dir, HashRef(base_commit_hash)) if base_commit_hash else None
+    
+    actions = list(_merge_trees(
+        objects_dir, 
+        working_dir,
+        base_commit.tree_hash if base_commit else None, 
+        head_commit.tree_hash, 
+        other_commit.tree_hash
+    ))
+    
+    index_data = index.read_index(index_path)
+    
+    for action in actions:
+            if action.type == 'DELETE':
+                if action.path.exists():
+                    if action.path.is_file():
+                        os.remove(action.path)
+                    elif action.path.is_dir():
+                        shutil.rmtree(action.path)
+                
+                # Update in-memory index
+                if action.path_str in index_data:
+                    del index_data[action.path_str]
+                    
+            elif action.type == 'UPDATE':
+                if action.path.exists() and action.path.is_dir():
+                    shutil.rmtree(action.path)
+                write_blob(objects_dir, action.blob_hash, action.path)
+                index_data[action.path_str] = action.blob_hash
+                
+            elif action.type == 'CONFLICT':
+                # No longer looking up from global dicts
+                h_base = action.h_base
+                h_head = action.h_head
+                h_other = action.blob_hash # This is h_other
+                
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    tmpdir = Path(tmpdirname)
+                    p_base = tmpdir / "base"
+                    p_source = tmpdir / "source" 
+                    p_other = tmpdir / "other"
+                    
+                    if h_base: write_blob(objects_dir, h_base, p_base)
+                    else: p_base.touch()
+                        
+                    if h_head: write_blob(objects_dir, h_head, p_source)
+                    elif action.path.is_file(): 
+                        shutil.copy2(action.path, p_source)
+                    else: p_source.write_text("")
+
+                    if h_other: write_blob(objects_dir, h_other, p_other)
+                    else: p_other.write_text("")
+                        
+                    merged_lines = merge_content(p_base, p_source, p_other, labels=("HEAD", other_ref_str))
+                    
+                    action.path.parent.mkdir(parents=True, exist_ok=True)
+                    if action.path.exists() and action.path.is_dir():
+                        shutil.rmtree(action.path)
+                        
+                    with action.path.open('w', encoding='utf-8') as f:
+                        for line in merged_lines:
+                            f.write(line)
+                    
+                    blob = save_file_content(objects_dir, action.path)
+                    index_data[action.path_str] = blob.hash
+
+    index.write_index(index_path, index_data)
